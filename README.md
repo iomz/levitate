@@ -1,5 +1,8 @@
 # Levitate
 
+[![CI](https://github.com/iomz/levitate/actions/workflows/ci.yml/badge.svg)](https://github.com/iomz/levitate/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Levitate lifts local stdio MCP servers into remote AI app connectors for Claude, ChatGPT, and other MCP hosts.
 
 Levitate is a local-first gateway. It runs near local tools, launches one configured stdio MCP server, connects as an MCP client, then exposes a remote MCP Streamable HTTP endpoint for cloud-hosted AI clients.

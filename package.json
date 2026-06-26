@@ -3,7 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Levitate lifts local stdio MCP servers into remote AI app connectors for Claude, ChatGPT, and other MCP hosts.",
+  "description": "A backend-agnostic MCP stdio-to-HTTP gateway.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iomz/levitate.git"
+  },
+  "bugs": {
+    "url": "https://github.com/iomz/levitate/issues"
+  },
+  "homepage": "https://github.com/iomz/levitate#readme",
   "bin": {
     "levitate": "./dist/src/index.js"
   },
