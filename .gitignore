@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.log
+
+# Local/private configs
+config/local.*.toml
+config/*.local.toml

@@ -1,0 +1,17 @@
+[server]
+name = "fake"
+host = "127.0.0.1"
+port = 8790
+log_level = "info"
+
+[stdio]
+command = "node"
+args = ["test/fixtures/fake-stdio-server.mjs"]
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+
+[tools]
+allow = ["fake_allowed", "fake_denied"]
+deny = ["fake_denied"]
