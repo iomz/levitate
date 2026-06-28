@@ -7,7 +7,7 @@ import {
   type JWTPayload,
 } from "jose";
 import { describe, expect, it } from "vitest";
-import { OidcJwtAuthenticator } from "../src/auth/oidc.js";
+import { defaultJwksUri, OidcJwtAuthenticator } from "../src/auth/oidc.js";
 import type { LevitateConfig } from "../src/config.js";
 import type { Logger } from "../src/logging.js";
 import { createApp } from "../src/server.js";
@@ -229,6 +229,7 @@ describe("oidc jwt auth", () => {
       iss: issuer,
       sub: "client-id@clients",
       email: "allowed@example.com",
+      email_verified: true,
       aud: audience,
       exp: nowSeconds + 60,
     });
@@ -247,11 +248,43 @@ describe("oidc jwt auth", () => {
       iss: issuer,
       sub: "client-id@clients",
       email: "blocked@example.com",
+      email_verified: true,
       aud: audience,
       exp: nowSeconds + 60,
     });
 
     await expect(auth.authenticate(requestWithToken(token))).rejects.toThrow("jwt email not allowed");
+  });
+
+  it("rejects allowed emails when the email claim is not verified", async () => {
+    const auth = createAuth({
+      allowed_emails: ["allowed@example.com"],
+    });
+    const token = await signJwt({
+      iss: issuer,
+      sub: "client-id@clients",
+      email: "allowed@example.com",
+      email_verified: false,
+      aud: audience,
+      exp: nowSeconds + 60,
+    });
+
+    await expect(auth.authenticate(requestWithToken(token))).rejects.toThrow("jwt email not verified");
+  });
+
+  it("rejects allowed emails when the email verified claim is missing", async () => {
+    const auth = createAuth({
+      allowed_emails: ["allowed@example.com"],
+    });
+    const token = await signJwt({
+      iss: issuer,
+      sub: "client-id@clients",
+      email: "allowed@example.com",
+      aud: audience,
+      exp: nowSeconds + 60,
+    });
+
+    await expect(auth.authenticate(requestWithToken(token))).rejects.toThrow("jwt email not verified");
   });
 
   it("returns a generic endpoint error for invalid oidc tokens", async () => {
@@ -300,6 +333,14 @@ describe("oidc jwt auth", () => {
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ error: "auth failed" });
+  });
+});
+
+describe("oidc jwks uri defaults", () => {
+  it("preserves path-based issuer segments", () => {
+    expect(defaultJwksUri("https://auth.example.test/tenant")).toBe(
+      "https://auth.example.test/tenant/.well-known/jwks.json",
+    );
   });
 });
 

@@ -9,13 +9,18 @@ const BearerAuthSchema = z.object({
     token_env: z.string().min(1).optional(),
   });
 
+const HttpsUrlSchema = z.string().url().refine(
+  (value) => new URL(value).protocol === "https:",
+  "OIDC URLs must use https",
+);
+
 const AuthSchema = z.union([
   BearerAuthSchema,
   z.object({
     mode: z.literal("oidc"),
-    issuer: z.string().url(),
+    issuer: HttpsUrlSchema,
     audience: z.string().min(1),
-    jwks_uri: z.string().url().optional(),
+    jwks_uri: HttpsUrlSchema.optional(),
     allowed_subjects: z.array(z.string().min(1)).default([]),
     allowed_emails: z.array(z.string().email()).default([]),
   }),

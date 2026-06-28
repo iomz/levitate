@@ -43,6 +43,10 @@ export class OidcJwtAuthenticator implements Authenticator {
       throw new AuthError("jwt subject not allowed");
     }
 
+    if (this.config.allowed_emails?.length && payload.email_verified !== true) {
+      throw new AuthError("jwt email not verified");
+    }
+
     if (this.config.allowed_emails?.length && (!email || !this.config.allowed_emails.includes(email))) {
       throw new AuthError("jwt email not allowed");
     }
@@ -77,6 +81,7 @@ function getEmail(payload: JWTPayload): string | undefined {
   return typeof payload.email === "string" ? payload.email : undefined;
 }
 
-function defaultJwksUri(issuer: string): string {
-  return new URL(".well-known/jwks.json", issuer).toString();
+export function defaultJwksUri(issuer: string): string {
+  const base = issuer.endsWith("/") ? issuer : `${issuer}/`;
+  return new URL(".well-known/jwks.json", base).toString();
 }
