@@ -15,7 +15,7 @@ const AuthSchema = z.union([
     mode: z.literal("oidc"),
     issuer: z.string().url(),
     audience: z.string().min(1),
-    jwks_url: z.string().url().optional(),
+    jwks_uri: z.string().url().optional(),
     allowed_subjects: z.array(z.string().min(1)).default([]),
     allowed_emails: z.array(z.string().email()).default([]),
   }),

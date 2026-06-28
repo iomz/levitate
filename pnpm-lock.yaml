@@ -17,6 +17,9 @@ importers:
       hono:
         specifier: ^4.8.3
         version: 4.12.27
+      jose:
+        specifier: ^6.2.3
+        version: 6.2.3
       smol-toml:
         specifier: ^1.4.2
         version: 1.7.0

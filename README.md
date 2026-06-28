@@ -27,7 +27,7 @@ Many useful MCP servers are local stdio servers. They work with Claude Desktop, 
 
 Do not expose private local tools without authentication.
 
-Levitate requires bearer-token auth for the MCP endpoint in the MVP. This is intentional: MCP servers can read or modify private data, and tunnel-published endpoints are public unless protected. `GET /health` is unauthenticated for deployment checks; `/mcp` requires `Authorization: Bearer <token>`.
+Levitate requires authentication for the MCP endpoint. Static bearer tokens are available for local/dev/simple deployments. OIDC/JWT validation is available for Auth0 and other RS256 JWKS-backed issuers. MCP servers can read or modify private data, and tunnel-published endpoints are public unless protected. `GET /health` is unauthenticated for deployment checks; `/mcp` requires `Authorization: Bearer <token>`.
 
 ## Quick Start
 
@@ -88,6 +88,62 @@ token_env = "LEVITATE_TOKEN"
 ```
 
 Real deployments can point `[stdio]` at any stdio MCP server and then use tool policy to filter or block exposed tools.
+
+## Auth Configuration
+
+### Static bearer tokens
+
+Static bearer mode reads a token from config or an environment variable:
+
+```toml
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+```
+
+Authenticated clients must send:
+
+```text
+Authorization: Bearer <LEVITATE_TOKEN>
+```
+
+### OIDC/JWT validation
+
+OIDC mode validates incoming bearer JWTs against the configured issuer, audience, expiration, and JWKS signature:
+
+```toml
+[auth]
+mode = "oidc"
+issuer = "https://YOUR_TENANT.auth0.com/"
+audience = "https://levitate.example.com"
+jwks_uri = "https://YOUR_TENANT.auth0.com/.well-known/jwks.json"
+```
+
+`jwks_uri` is optional when the issuer's standard `/.well-known/jwks.json` path is correct.
+
+Auth0 setup:
+
+- Create an Auth0 Machine to Machine application for clients that need tokens.
+- Create an Auth0 API with identifier `https://levitate.example.com`.
+- Use RS256 signing.
+- Configure Levitate with issuer `https://YOUR_TENANT.auth0.com/` and audience `https://levitate.example.com`.
+
+Levitate only needs issuer, audience, and optionally JWKS URI to validate incoming tokens. Auth0 client credentials are for clients or smoke scripts that obtain tokens; do not store client secrets in Levitate config.
+
+Manual token acquisition for local smoke tests can use environment variables:
+
+```sh
+export AUTH0_DOMAIN=YOUR_TENANT.auth0.com
+export AUTH0_AUDIENCE=https://levitate.example.com
+export AUTH0_CLIENT_ID=...
+export AUTH0_CLIENT_SECRET=...
+```
+
+Then request a token from:
+
+```text
+https://${AUTH0_DOMAIN}/oauth/token
+```
 
 ## Tool Policy
 
@@ -283,13 +339,11 @@ docker run --rm -p 8787:8787 \
 
 For local stdio servers that need host files, mount required vault/tool paths and adjust config paths for the container.
 
-## Auth Roadmap
+## Auth Notes
 
-MVP auth is static bearer token.
+OIDC/JWT validation runs behind the same `Authenticator` interface as static bearer tokens.
 
-Next auth layer should add OIDC/JWKS validation behind the existing `Authenticator` interface. Auth0 is the recommended hosted IdP. Authentik is an important compatibility target via standard OIDC.
-
-Future OIDC validation must check:
+OIDC validation checks:
 
 - JWKS signature
 - issuer
@@ -298,7 +352,7 @@ Future OIDC validation must check:
 - not-before when present
 - subject or email allowlists when configured
 
-No fake OIDC is implemented in the MVP.
+Only RS256 JWTs are accepted. Static bearer auth remains available for local/dev/simple deployments.
 
 ## MCP Transport Choice
 
