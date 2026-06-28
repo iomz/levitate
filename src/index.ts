@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { BearerAuthenticator } from "./auth/bearer.js";
-import { getConfigPath, loadConfig, resolveBearerToken } from "./config.js";
+import { createAuthenticator } from "./auth/index.js";
+import { getConfigPath, loadConfig } from "./config.js";
 import { createLogger } from "./logging.js";
 import { StdioMcpBackend } from "./mcp/backend.js";
 import { loadInstructions } from "./mcp/instructions.js";
@@ -10,11 +10,7 @@ async function main(): Promise<void> {
   const config = await loadConfig(getConfigPath());
   const logger = createLogger(config.server.log_level);
 
-  if (config.auth.mode !== "bearer") {
-    throw new Error("only bearer auth is implemented in MVP");
-  }
-
-  const authenticator = new BearerAuthenticator(resolveBearerToken(config.auth));
+  const authenticator = createAuthenticator(config.auth);
   const instructions = await loadInstructions(config);
   const backend = new StdioMcpBackend(config, logger);
 

@@ -114,7 +114,7 @@ describe("mcp endpoint", () => {
     }));
 
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: "missing authorization header" });
+    await expect(response.json()).resolves.toEqual({ error: "auth failed" });
   });
 
   it("proxies tools through streamable http with policy applied", async () => {

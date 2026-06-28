@@ -41,4 +41,59 @@ command = "node"
 mode = "bearer"
 `)).toThrow();
   });
+
+  it("parses oidc auth config", () => {
+    const config = parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "oidc"
+issuer = "https://auth.example.test/"
+audience = "https://levitate.example.test"
+jwks_uri = "https://auth.example.test/.well-known/jwks.json"
+allowed_subjects = ["client-id@clients"]
+`);
+
+    expect(config.auth.mode).toBe("oidc");
+    if (config.auth.mode === "oidc") {
+      expect(config.auth.jwks_uri).toBe("https://auth.example.test/.well-known/jwks.json");
+      expect(config.auth.allowed_subjects).toEqual(["client-id@clients"]);
+    }
+  });
+
+  it("rejects oidc issuer without https", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "oidc"
+issuer = "http://auth.example.test/"
+audience = "https://levitate.example.test"
+jwks_uri = "https://auth.example.test/.well-known/jwks.json"
+`)).toThrow("OIDC URLs must use https");
+  });
+
+  it("rejects oidc jwks uri without https", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "oidc"
+issuer = "https://auth.example.test/"
+audience = "https://levitate.example.test"
+jwks_uri = "http://auth.example.test/.well-known/jwks.json"
+`)).toThrow("OIDC URLs must use https");
+  });
 });

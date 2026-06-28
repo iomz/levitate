@@ -47,7 +47,7 @@ export function createApp(context: AppContext): Hono {
       const message = error instanceof Error ? error.message : "auth failed";
       context.logger.warn("auth failed", { message });
       if (error instanceof AuthError) {
-        return c.json({ error: message }, error.status);
+        return c.json({ error: "auth failed" }, error.status);
       }
       return c.json({ error: "auth failed" }, 401);
     }
