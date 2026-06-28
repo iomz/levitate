@@ -1,11 +1,21 @@
-# Levitate
+<p align="center">
+  <img width="160" height="160" alt="Levitate app icon" src="assets/levitate-icon.png" />
+</p>
 
-[![CI](https://github.com/iomz/levitate/actions/workflows/ci.yml/badge.svg)](https://github.com/iomz/levitate/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+<h1 align="center">Levitate</h1>
 
-Levitate lifts local stdio MCP servers into remote AI app connectors for Claude, ChatGPT, and other MCP hosts.
+<p align="center">
+  Local-first gateway for exposing stdio MCP servers as remote MCP endpoints.
+</p>
 
-Levitate is a local-first gateway. It runs near local tools, launches one configured stdio MCP server, connects as an MCP client, then exposes a remote MCP Streamable HTTP endpoint for cloud-hosted AI clients.
+<p align="center">
+  <a href="https://github.com/iomz/levitate/actions/workflows/ci.yml"><img src="https://github.com/iomz/levitate/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License"></a>
+</p>
+
+Levitate runs near local tools, launches one configured stdio MCP server, connects as an MCP client, then exposes a Streamable HTTP endpoint for Claude, ChatGPT, and other remote MCP hosts.
+
+The project is **Levitate**. The package, CLI, Docker image, and binary artifact are `levitate`.
 
 Initial target flow:
 
@@ -17,17 +27,24 @@ Claude.ai / ChatGPT
   -> private tool or data system
 ```
 
-Levitate is backend-agnostic. Any stdio MCP server can be exposed through a Streamable HTTP endpoint, subject to auth and policy.
+Levitate is backend-agnostic.
+Any stdio MCP server can be exposed through its HTTP endpoint, subject to auth and policy.
 
 ## Why Promotion Exists
 
-Many useful MCP servers are local stdio servers. They work with Claude Desktop, Claude Code, Cursor, and other local MCP hosts, but cloud-hosted AI apps cannot connect to them directly. Levitate promotes those local capabilities into a remote MCP endpoint while keeping policy and auth at the gateway.
+Many useful MCP servers are local stdio servers.
+They work with Claude Desktop, Claude Code, Cursor, and other local MCP hosts, but cloud-hosted AI apps cannot connect to them directly.
+Levitate promotes those local capabilities into a remote MCP endpoint while keeping policy and auth at the gateway.
 
 ## Security
 
 Do not expose private local tools without authentication.
 
-Levitate requires authentication for the MCP endpoint. Static bearer tokens are available for local/dev/simple deployments. OIDC/JWT validation is available for Auth0 and other RS256 JWKS-backed issuers. MCP servers can read or modify private data, and tunnel-published endpoints are public unless protected. `GET /health` is unauthenticated for deployment checks; `/mcp` requires `Authorization: Bearer <token>`.
+Levitate requires authentication for the MCP endpoint.
+Static bearer tokens are available for local/dev/simple deployments.
+OIDC/JWT validation is available for Auth0 and other RS256 JWKS-backed issuers.
+MCP servers can read or modify private data, and tunnel-published endpoints are public unless protected.
+`GET /health` is unauthenticated for deployment checks; `/mcp` requires `Authorization: Bearer <token>`.
 
 ## Quick Start
 
@@ -43,7 +60,7 @@ Set a bearer token:
 export LEVITATE_TOKEN="$(openssl rand -hex 32)"
 ```
 
-Start Levitate with the fake stdio backend profile:
+Start `levitate` with the fake stdio backend profile:
 
 ```sh
 pnpm build
@@ -128,7 +145,8 @@ Auth0 setup:
 - Use RS256 signing.
 - Configure Levitate with issuer `https://YOUR_TENANT.auth0.com/` and audience `https://levitate.example.com`.
 
-Levitate only needs issuer, audience, and optionally JWKS URI to validate incoming tokens. Auth0 client credentials are for clients or smoke scripts that obtain tokens; do not store client secrets in Levitate config.
+Levitate only needs issuer, audience, and optionally JWKS URI to validate incoming tokens.
+Auth0 client credentials are for clients or smoke scripts that obtain tokens; do not store client secrets in Levitate config.
 
 Manual token acquisition for local smoke tests can use environment variables:
 
@@ -179,13 +197,15 @@ Levitate is intended to host multiple MCP backends by assigning each backend its
 
 Each endpoint should behave as an independent MCP server backed by one stdio MCP backend.
 
-Levitate does not merge multiple backend tool namespaces into a single `/mcp` endpoint by default. MCP already provides tool discovery through `tools/list`, so Levitate should preserve backend tool names and schemas unless an explicit policy filters or blocks them.
+Levitate does not merge multiple backend tool namespaces into a single `/mcp` endpoint by default.
+MCP already provides tool discovery through `tools/list`, so Levitate should preserve backend tool names and schemas unless an explicit policy filters or blocks them.
 
-This keeps Levitate transport-transparent and avoids tool-name collisions, namespace rewriting, ambiguous routing, and policy mistakes. If an aggregate MCP endpoint is ever needed, it should be treated as a separate explicit feature, not the default multi-backend model.
+This keeps Levitate transport-transparent and avoids tool-name collisions, namespace rewriting, ambiguous routing, and policy mistakes.
+If an aggregate MCP endpoint is ever needed, it should be treated as a separate explicit feature, not the default multi-backend model.
 
 ## Tunnel Deployment
 
-Run Levitate locally, then expose it with Cloudflare Tunnel, ngrok, or another HTTPS tunnel:
+Run `levitate` locally, then expose it with Cloudflare Tunnel, ngrok, or another HTTPS tunnel:
 
 ```sh
 cloudflared tunnel --url http://127.0.0.1:8787
@@ -263,7 +283,9 @@ pnpm test test/mcp.test.ts
 
 ### Optional local real-backend smoke test
 
-You can test Levitate against any real stdio MCP backend using a local config. This is not required for normal development or CI. Create a local config that points to your backend, then choose one safe allowed tool and one denied tool for policy testing.
+You can test Levitate against any real stdio MCP backend using a local config.
+This is not required for normal development or CI.
+Create a local config that points to your backend, then choose one safe allowed tool and one denied tool for policy testing.
 
 ```sh
 export LEVITATE_TOKEN="$(openssl rand -hex 32)"
@@ -318,7 +340,8 @@ Verify in Inspector:
 - allowed tool calls work through Levitate
 - denied direct calls return an MCP tool error instead of an HTTP error or server crash
 
-MCP Inspector `0.22.0` CLI supports HTTP headers with `--header`, so the smoke test keeps bearer-token auth enabled. The browser UI path may require entering headers in the UI; use the CLI commands above as the reproducible smoke path.
+MCP Inspector `0.22.0` CLI supports HTTP headers with `--header`, so the smoke test keeps bearer-token auth enabled.
+The browser UI path may require entering headers in the UI; use the CLI commands above as the reproducible smoke path.
 
 ## Docker
 
@@ -362,7 +385,8 @@ Levitate uses the official `@modelcontextprotocol/sdk` v1 Streamable HTTP implem
 - remote endpoint: `WebStandardStreamableHTTPServerTransport`
 - HTTP framework: Hono, following the SDK Hono example
 
-The remote endpoint is `/mcp` and uses JSON responses from Streamable HTTP for straightforward request/response behavior. Compatibility should be validated against each target remote MCP host because Claude, ChatGPT, and other hosts may differ in connector rollout details.
+The remote endpoint is `/mcp` and uses JSON responses from Streamable HTTP for straightforward request/response behavior.
+Compatibility should be validated against each target remote MCP host because Claude, ChatGPT, and other hosts may differ in connector rollout details.
 
 ## Non-Goals
 
