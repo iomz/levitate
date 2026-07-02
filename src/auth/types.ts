@@ -1,5 +1,11 @@
 export interface AuthResult {
-  subject: string;
+  kind: "bearer" | "oidc";
+  subject?: string;
+  email?: string;
+  clientId?: string;
+  scopes: string[];
+  audience?: string | string[];
+  issuer?: string;
 }
 
 export interface Authenticator {

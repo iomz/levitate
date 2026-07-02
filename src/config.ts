@@ -19,6 +19,32 @@ const HttpsUrlSchema = z.string().url().refine(
   "OIDC URLs must use https",
 );
 
+const OAuthResourceSchema = z.object({
+  enabled: z.boolean().default(false),
+  resource: z.string().url().optional(),
+  authorization_servers: z.array(z.string().url()).default([]),
+  scopes_supported: z.array(z.string().min(1)).default([]),
+  metadata_url: z.string().url().optional(),
+}).superRefine((value, context) => {
+  if (!value.enabled) return;
+
+  if (!value.resource) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "oauth.resource.resource is required when oauth.resource.enabled is true",
+      path: ["resource"],
+    });
+  }
+
+  if (!value.authorization_servers.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "oauth.resource.authorization_servers must be non-empty when oauth.resource.enabled is true",
+      path: ["authorization_servers"],
+    });
+  }
+});
+
 const AuthSchema = z.union([
   BearerAuthSchema,
   z.object({
@@ -58,6 +84,9 @@ const ConfigSchema = z.object({
     file: z.string().min(1).optional(),
   }).default({}),
   auth: AuthSchema,
+  oauth: z.object({
+    resource: OAuthResourceSchema.default({ enabled: false }),
+  }).default({ resource: { enabled: false } }),
   tools: z.object({
     allow: z.array(z.string().min(1)).optional(),
     deny: z.array(z.string().min(1)).default([]),

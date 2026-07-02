@@ -41,6 +41,13 @@ const config: LevitateConfig = {
     mode: "bearer",
     token: "secret",
   },
+  oauth: {
+    resource: {
+      enabled: false,
+      authorization_servers: [],
+      scopes_supported: [],
+    },
+  },
   tools: {
     allow: ["search", "delete_note"],
     deny: ["delete_note"],
@@ -184,6 +191,70 @@ describe("mcp endpoint", () => {
     }));
 
     expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "auth failed" });
+  });
+
+  it("serves configured oauth protected resource metadata", async () => {
+    const app = createApp({
+      config: {
+        ...config,
+        oauth: {
+          resource: {
+            enabled: true,
+            resource: "https://levitate.example.com/brain/mcp",
+            authorization_servers: ["https://auth.example.com/"],
+            scopes_supported: ["levitate:read", "levitate:call"],
+          },
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request("http://localhost/.well-known/oauth-protected-resource"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      resource: "https://levitate.example.com/brain/mcp",
+      authorization_servers: ["https://auth.example.com/"],
+      bearer_methods_supported: ["header"],
+      scopes_supported: ["levitate:read", "levitate:call"],
+    });
+  });
+
+  it("adds oauth protected resource metadata to auth challenges", async () => {
+    const app = createApp({
+      config: {
+        ...config,
+        server: {
+          ...config.server,
+          mcp_path: "/brain/mcp",
+        },
+        oauth: {
+          resource: {
+            enabled: true,
+            resource: "https://levitate.example.com/brain/mcp",
+            authorization_servers: ["https://auth.example.com/"],
+            scopes_supported: ["levitate:read"],
+          },
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request("http://localhost/brain/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    }));
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toBe(
+      'Bearer resource_metadata="https://levitate.example.com/.well-known/oauth-protected-resource"',
+    );
     await expect(response.json()).resolves.toEqual({ error: "auth failed" });
   });
 

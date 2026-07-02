@@ -33,6 +33,7 @@ const config: LevitateConfig = {
     host: "127.0.0.1",
     port: 8787,
     log_level: "info",
+    mcp_path: "/mcp",
   },
   stdio: {
     command: "node",
@@ -47,6 +48,13 @@ const config: LevitateConfig = {
     jwks_uri: "https://auth.example.test/.well-known/jwks.json",
     allowed_subjects: [],
     allowed_emails: [],
+  },
+  oauth: {
+    resource: {
+      enabled: false,
+      authorization_servers: [],
+      scopes_supported: [],
+    },
   },
   tools: {
     deny: [],
@@ -71,7 +79,11 @@ describe("oidc jwt auth", () => {
     });
 
     await expect(auth.authenticate(requestWithToken(token))).resolves.toEqual({
+      kind: "oidc",
       subject: "client-id@clients",
+      scopes: [],
+      audience,
+      issuer,
     });
   });
 
@@ -86,7 +98,11 @@ describe("oidc jwt auth", () => {
     });
 
     await expect(auth.authenticate(requestWithToken(token))).resolves.toEqual({
+      kind: "oidc",
       subject: "client-id@clients",
+      scopes: [],
+      audience,
+      issuer,
     });
   });
 
@@ -100,7 +116,11 @@ describe("oidc jwt auth", () => {
     });
 
     await expect(auth.authenticate(requestWithToken(token))).resolves.toEqual({
+      kind: "oidc",
       subject: "client-id@clients",
+      scopes: [],
+      audience: ["https://other.example", audience],
+      issuer,
     });
   });
 
@@ -203,7 +223,11 @@ describe("oidc jwt auth", () => {
     });
 
     await expect(auth.authenticate(requestWithToken(token))).resolves.toEqual({
+      kind: "oidc",
       subject: "allowed-subject",
+      scopes: [],
+      audience,
+      issuer,
     });
   });
 
@@ -235,8 +259,31 @@ describe("oidc jwt auth", () => {
     });
 
     await expect(auth.verifyToken(token)).resolves.toEqual({
-      sub: "client-id@clients",
+      kind: "oidc",
+      subject: "client-id@clients",
       email: "allowed@example.com",
+      scopes: [],
+      audience,
+      issuer,
+    });
+  });
+
+  it("parses space-separated scope claims", async () => {
+    const auth = createAuth();
+    const token = await signJwt({
+      iss: issuer,
+      sub: "client-id@clients",
+      aud: audience,
+      scope: "levitate:read levitate:call",
+      exp: nowSeconds + 60,
+    });
+
+    await expect(auth.authenticate(requestWithToken(token))).resolves.toEqual({
+      kind: "oidc",
+      subject: "client-id@clients",
+      scopes: ["levitate:read", "levitate:call"],
+      audience,
+      issuer,
     });
   });
 

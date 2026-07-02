@@ -11,7 +11,7 @@ export class BearerAuthenticator implements Authenticator {
     if (!match) throw new AuthError("invalid authorization scheme");
 
     if (match[1] !== this.token) throw new AuthError("invalid bearer token");
-    return { subject: "bearer-token" };
+    return { kind: "bearer", subject: "bearer-token", scopes: [] };
   }
 }
 
@@ -25,5 +25,5 @@ export function validateBearerAuthorization(
   const match = request.headers.get("authorization")?.match(/^Bearer (.+)$/);
   if (!match) throw new AuthError("missing or invalid bearer token");
   if (match[1] !== token) throw new AuthError("invalid bearer token");
-  return { subject: "bearer-token" };
+  return { kind: "bearer", subject: "bearer-token", scopes: [] };
 }

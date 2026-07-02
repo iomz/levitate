@@ -30,13 +30,25 @@ export function createApp(context: AppContext): Hono {
       "Last-Event-ID",
       "mcp-protocol-version",
     ],
-    exposeHeaders: ["mcp-session-id", "mcp-protocol-version"],
+    exposeHeaders: ["mcp-session-id", "mcp-protocol-version", "WWW-Authenticate"],
   }));
 
   app.get("/health", (c) => c.json({
     status: "ok",
     name: context.config.server.name,
   }));
+
+  if (context.config.oauth.resource.enabled) {
+    app.get("/.well-known/oauth-protected-resource", (c) => {
+      const resource = context.config.oauth.resource;
+      return c.json({
+        resource: resource.resource,
+        authorization_servers: resource.authorization_servers,
+        bearer_methods_supported: ["header"],
+        scopes_supported: resource.scopes_supported,
+      });
+    });
+  }
 
   app.all(context.config.server.mcp_path, async (c) => {
     if (c.req.method === "OPTIONS") return c.body(null, 204);
@@ -46,6 +58,10 @@ export function createApp(context: AppContext): Hono {
     } catch (error) {
       const message = error instanceof Error ? error.message : "auth failed";
       context.logger.warn("auth failed", { message });
+      const resourceMetadataUrl = getResourceMetadataUrl(context.config);
+      if (resourceMetadataUrl) {
+        c.header("WWW-Authenticate", `Bearer resource_metadata="${resourceMetadataUrl}"`);
+      }
       if (error instanceof AuthError) {
         return c.json({ error: "auth failed" }, error.status);
       }
@@ -82,4 +98,11 @@ export function startHttpServer(context: AppContext): ServerType {
     hostname: host,
     port,
   });
+}
+
+function getResourceMetadataUrl(config: LevitateConfig): string | undefined {
+  const resource = config.oauth.resource;
+  if (!resource.enabled || !resource.resource) return undefined;
+  if (resource.metadata_url) return resource.metadata_url;
+  return new URL("/.well-known/oauth-protected-resource", resource.resource).toString();
 }

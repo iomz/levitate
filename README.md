@@ -179,6 +179,43 @@ Then request a token from:
 https://${AUTH0_DOMAIN}/oauth/token
 ```
 
+### OAuth protected resource metadata
+
+Levitate can serve OAuth protected resource metadata for remote MCP hosts that discover authorization details from the resource server:
+
+```toml
+[oauth.resource]
+enabled = true
+resource = "https://levitate.example.com/brain/mcp"
+authorization_servers = ["https://auth.example.com/"]
+scopes_supported = ["levitate:read", "levitate:call"]
+```
+
+When enabled, Levitate serves:
+
+```text
+GET /.well-known/oauth-protected-resource
+```
+
+The response includes the configured resource URL, authorization server list, `bearer_methods_supported = ["header"]`, and configured scopes.
+`resource` is the canonical public MCP endpoint URL and must be configured explicitly.
+Levitate does not derive it from issuer, audience, request host, or local bind address.
+
+Unauthenticated or invalid-auth MCP requests keep the generic JSON body:
+
+```json
+{ "error": "auth failed" }
+```
+
+When protected resource metadata is enabled, the same `401` response includes:
+
+```http
+WWW-Authenticate: Bearer resource_metadata="https://levitate.example.com/.well-known/oauth-protected-resource"
+```
+
+By default, Levitate derives that metadata URL from the configured resource origin.
+Set `oauth.resource.metadata_url` only when the public metadata URL needs an explicit override.
+
 ## Tool Policy
 
 Levitate filters backend tools before advertising them to remote clients.

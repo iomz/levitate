@@ -62,6 +62,68 @@ token_env = "LEVITATE_TOKEN"
 `)).toThrow("server.mcp_path must start with /");
   });
 
+  it("parses oauth protected resource metadata config", () => {
+    const config = parseConfigText(`
+[server]
+name = "brain"
+mcp_path = "/brain/mcp"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+
+[oauth.resource]
+enabled = true
+resource = "https://levitate.example.com/brain/mcp"
+authorization_servers = ["https://auth.example.com/"]
+scopes_supported = ["levitate:read", "levitate:call"]
+`);
+
+    expect(config.oauth.resource.enabled).toBe(true);
+    expect(config.oauth.resource.resource).toBe("https://levitate.example.com/brain/mcp");
+    expect(config.oauth.resource.authorization_servers).toEqual(["https://auth.example.com/"]);
+    expect(config.oauth.resource.scopes_supported).toEqual(["levitate:read", "levitate:call"]);
+  });
+
+  it("rejects enabled oauth protected resource metadata without a resource", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+
+[oauth.resource]
+enabled = true
+authorization_servers = ["https://auth.example.com/"]
+`)).toThrow("oauth.resource.resource is required when oauth.resource.enabled is true");
+  });
+
+  it("rejects enabled oauth protected resource metadata without authorization servers", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+
+[oauth.resource]
+enabled = true
+resource = "https://levitate.example.com/brain/mcp"
+`)).toThrow("oauth.resource.authorization_servers must be non-empty when oauth.resource.enabled is true");
+  });
+
   it("rejects bearer auth without token source", () => {
     expect(() => parseConfigText(`
 [server]
