@@ -9,6 +9,11 @@ const BearerAuthSchema = z.object({
     token_env: z.string().min(1).optional(),
   });
 
+const McpPathSchema = z.string().min(1).refine(
+  (value) => value.startsWith("/"),
+  "server.mcp_path must start with /",
+);
+
 const HttpsUrlSchema = z.string().url().refine(
   (value) => new URL(value).protocol === "https:",
   "OIDC URLs must use https",
@@ -40,6 +45,7 @@ const ConfigSchema = z.object({
     host: z.string().min(1).default("127.0.0.1"),
     port: z.coerce.number().int().positive().max(65535).default(8787),
     log_level: z.enum(["debug", "info", "warn", "error"]).default("info"),
+    mcp_path: McpPathSchema.default("/mcp"),
   }),
   stdio: z.object({
     command: z.string().min(1),

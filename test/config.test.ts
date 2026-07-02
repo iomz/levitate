@@ -23,10 +23,43 @@ deny = ["delete_note"]
 `);
 
     expect(config.server.name).toBe("brain");
+    expect(config.server.mcp_path).toBe("/mcp");
     expect(config.stdio.command).toBe("node");
     expect(config.auth.mode).toBe("bearer");
     expect(config.tools.allow).toEqual(["search"]);
     expect(config.tools.deny).toEqual(["delete_note"]);
+  });
+
+  it("parses a custom mcp path", () => {
+    const config = parseConfigText(`
+[server]
+name = "brain"
+mcp_path = "/brain/mcp"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`);
+
+    expect(config.server.mcp_path).toBe("/brain/mcp");
+  });
+
+  it("rejects an mcp path without a leading slash", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+mcp_path = "brain/mcp"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`)).toThrow("server.mcp_path must start with /");
   });
 
   it("rejects bearer auth without token source", () => {

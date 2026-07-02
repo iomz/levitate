@@ -38,7 +38,7 @@ export function createApp(context: AppContext): Hono {
     name: context.config.server.name,
   }));
 
-  app.all("/mcp", async (c) => {
+  app.all(context.config.server.mcp_path, async (c) => {
     if (c.req.method === "OPTIONS") return c.body(null, 204);
 
     try {
@@ -74,7 +74,7 @@ export function startHttpServer(context: AppContext): ServerType {
   context.logger.info("http server starting", {
     host,
     port,
-    endpoint: "/mcp",
+    endpoint: context.config.server.mcp_path,
   });
 
   return serve({

@@ -29,6 +29,7 @@ const config: LevitateConfig = {
     host: "127.0.0.1",
     port: 8787,
     log_level: "info",
+    mcp_path: "/mcp",
   },
   stdio: {
     command: "node",
@@ -99,6 +100,75 @@ describe("mcp endpoint", () => {
     });
 
     const response = await app.fetch(new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "test-client", version: "0.1.0" },
+        },
+      }),
+    }));
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "auth failed" });
+  });
+
+  it("serves mcp at the default path", async () => {
+    const app = createApp({
+      config,
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request("http://localhost/mcp", {
+      method: "OPTIONS",
+    }));
+
+    expect(response.status).toBe(204);
+  });
+
+  it("serves mcp at a custom path", async () => {
+    const app = createApp({
+      config: {
+        ...config,
+        server: {
+          ...config.server,
+          mcp_path: "/brain/mcp",
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const configured = await app.fetch(new Request("http://localhost/brain/mcp"));
+    const defaultPath = await app.fetch(new Request("http://localhost/mcp"));
+
+    expect(configured.status).toBe(401);
+    expect(defaultPath.status).toBe(404);
+  });
+
+  it("requires auth at a custom mcp path", async () => {
+    const app = createApp({
+      config: {
+        ...config,
+        server: {
+          ...config.server,
+          mcp_path: "/brain/mcp",
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request("http://localhost/brain/mcp", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
