@@ -90,7 +90,7 @@ function getEmail(payload: JWTPayload): string | undefined {
   return typeof payload.email === "string" ? payload.email : undefined;
 }
 
-function getClientId(payload: JWTPayload): string | undefined {
+export function getClientId(payload: JWTPayload): string | undefined {
   if (typeof payload.client_id === "string") return payload.client_id;
   if (typeof payload.azp === "string") return payload.azp;
   return undefined;

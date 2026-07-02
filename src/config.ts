@@ -21,10 +21,10 @@ const HttpsUrlSchema = z.string().url().refine(
 
 const OAuthResourceSchema = z.object({
   enabled: z.boolean().default(false),
-  resource: z.string().url().optional(),
-  authorization_servers: z.array(z.string().url()).default([]),
+  resource: HttpsUrlSchema.optional(),
+  authorization_servers: z.array(HttpsUrlSchema).default([]),
   scopes_supported: z.array(z.string().min(1)).default([]),
-  metadata_url: z.string().url().optional(),
+  metadata_url: HttpsUrlSchema.optional(),
 }).superRefine((value, context) => {
   if (!value.enabled) return;
 

@@ -7,7 +7,7 @@ import {
   type JWTPayload,
 } from "jose";
 import { describe, expect, it } from "vitest";
-import { defaultJwksUri, OidcJwtAuthenticator } from "../src/auth/oidc.js";
+import { defaultJwksUri, getClientId, OidcJwtAuthenticator } from "../src/auth/oidc.js";
 import type { LevitateConfig } from "../src/config.js";
 import type { Logger } from "../src/logging.js";
 import { createApp } from "../src/server.js";
@@ -388,6 +388,20 @@ describe("oidc jwks uri defaults", () => {
     expect(defaultJwksUri("https://auth.example.test/tenant")).toBe(
       "https://auth.example.test/tenant/.well-known/jwks.json",
     );
+  });
+});
+
+describe("oidc client id claims", () => {
+  it("reads client_id when present", () => {
+    expect(getClientId({ client_id: "client-id" })).toBe("client-id");
+  });
+
+  it("falls back to azp when client_id is absent", () => {
+    expect(getClientId({ azp: "authorized-party" })).toBe("authorized-party");
+  });
+
+  it("ignores non-string client id claims", () => {
+    expect(getClientId({ client_id: ["client-id"], azp: 123 })).toBeUndefined();
   });
 });
 

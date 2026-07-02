@@ -124,6 +124,60 @@ resource = "https://levitate.example.com/brain/mcp"
 `)).toThrow("oauth.resource.authorization_servers must be non-empty when oauth.resource.enabled is true");
   });
 
+  it("rejects oauth protected resource metadata urls without https", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+
+[oauth.resource]
+enabled = true
+resource = "http://levitate.example.com/brain/mcp"
+authorization_servers = ["https://auth.example.com/"]
+`)).toThrow("OIDC URLs must use https");
+
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+
+[oauth.resource]
+enabled = true
+resource = "https://levitate.example.com/brain/mcp"
+authorization_servers = ["http://auth.example.com/"]
+`)).toThrow("OIDC URLs must use https");
+
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+
+[oauth.resource]
+enabled = true
+resource = "https://levitate.example.com/brain/mcp"
+authorization_servers = ["https://auth.example.com/"]
+metadata_url = "http://levitate.example.com/.well-known/oauth-protected-resource"
+`)).toThrow("OIDC URLs must use https");
+  });
+
   it("rejects bearer auth without token source", () => {
     expect(() => parseConfigText(`
 [server]
