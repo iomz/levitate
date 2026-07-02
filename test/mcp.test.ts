@@ -29,6 +29,7 @@ const config: LevitateConfig = {
     host: "127.0.0.1",
     port: 8787,
     log_level: "info",
+    mcp_path: "/mcp",
   },
   stdio: {
     command: "node",
@@ -39,6 +40,13 @@ const config: LevitateConfig = {
   auth: {
     mode: "bearer",
     token: "secret",
+  },
+  oauth: {
+    resource: {
+      enabled: false,
+      authorization_servers: [],
+      scopes_supported: [],
+    },
   },
   tools: {
     allow: ["search", "delete_note"],
@@ -114,6 +122,139 @@ describe("mcp endpoint", () => {
     }));
 
     expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "auth failed" });
+  });
+
+  it("serves mcp at the default path", async () => {
+    const app = createApp({
+      config,
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request("http://localhost/mcp", {
+      method: "OPTIONS",
+    }));
+
+    expect(response.status).toBe(204);
+  });
+
+  it("serves mcp at a custom path", async () => {
+    const app = createApp({
+      config: {
+        ...config,
+        server: {
+          ...config.server,
+          mcp_path: "/brain/mcp",
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const configured = await app.fetch(new Request("http://localhost/brain/mcp"));
+    const defaultPath = await app.fetch(new Request("http://localhost/mcp"));
+
+    expect(configured.status).toBe(401);
+    expect(defaultPath.status).toBe(404);
+  });
+
+  it("requires auth at a custom mcp path", async () => {
+    const app = createApp({
+      config: {
+        ...config,
+        server: {
+          ...config.server,
+          mcp_path: "/brain/mcp",
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request("http://localhost/brain/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "test-client", version: "0.1.0" },
+        },
+      }),
+    }));
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "auth failed" });
+  });
+
+  it("serves configured oauth protected resource metadata", async () => {
+    const app = createApp({
+      config: {
+        ...config,
+        oauth: {
+          resource: {
+            enabled: true,
+            resource: "https://levitate.example.com/brain/mcp",
+            authorization_servers: ["https://auth.example.com/"],
+            scopes_supported: ["levitate:read", "levitate:call"],
+          },
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request("http://localhost/.well-known/oauth-protected-resource"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      resource: "https://levitate.example.com/brain/mcp",
+      authorization_servers: ["https://auth.example.com/"],
+      bearer_methods_supported: ["header"],
+      scopes_supported: ["levitate:read", "levitate:call"],
+    });
+  });
+
+  it("adds oauth protected resource metadata to auth challenges", async () => {
+    const app = createApp({
+      config: {
+        ...config,
+        server: {
+          ...config.server,
+          mcp_path: "/brain/mcp",
+        },
+        oauth: {
+          resource: {
+            enabled: true,
+            resource: "https://levitate.example.com/brain/mcp",
+            authorization_servers: ["https://auth.example.com/"],
+            scopes_supported: ["levitate:read"],
+          },
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request("http://localhost/brain/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    }));
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toBe(
+      'Bearer resource_metadata="https://levitate.example.com/.well-known/oauth-protected-resource"',
+    );
     await expect(response.json()).resolves.toEqual({ error: "auth failed" });
   });
 

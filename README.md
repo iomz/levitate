@@ -44,7 +44,7 @@ Levitate requires authentication for the MCP endpoint.
 Static bearer tokens are available for local/dev/simple deployments.
 OIDC/JWT validation is available for Auth0 and other RS256 JWKS-backed issuers.
 MCP servers can read or modify private data, and tunnel-published endpoints are public unless protected.
-`GET /health` is unauthenticated for deployment checks; `/mcp` requires `Authorization: Bearer <token>`.
+`GET /health` is unauthenticated for deployment checks; the MCP endpoint requires `Authorization: Bearer <token>`.
 
 ## Quick Start
 
@@ -94,6 +94,7 @@ Authorization: Bearer <LEVITATE_TOKEN>
 name = "fake"
 host = "127.0.0.1"
 port = 8790
+mcp_path = "/mcp"
 
 [stdio]
 command = "node"
@@ -105,6 +106,21 @@ token_env = "LEVITATE_TOKEN"
 ```
 
 Real deployments can point `[stdio]` at any stdio MCP server and then use tool policy to filter or block exposed tools.
+
+## Server Configuration
+
+The MCP endpoint defaults to `/mcp`.
+Set `server.mcp_path` to expose the single configured backend at another path:
+
+```toml
+[server]
+name = "example"
+mcp_path = "/brain/mcp"
+```
+
+The path must start with `/`.
+`GET /health` remains unchanged.
+This config does not enable multi-backend routing or backend aggregation.
 
 ## Auth Configuration
 
@@ -163,6 +179,43 @@ Then request a token from:
 https://${AUTH0_DOMAIN}/oauth/token
 ```
 
+### OAuth protected resource metadata
+
+Levitate can serve OAuth protected resource metadata for remote MCP hosts that discover authorization details from the resource server:
+
+```toml
+[oauth.resource]
+enabled = true
+resource = "https://levitate.example.com/brain/mcp"
+authorization_servers = ["https://auth.example.com/"]
+scopes_supported = ["levitate:read", "levitate:call"]
+```
+
+When enabled, Levitate serves:
+
+```text
+GET /.well-known/oauth-protected-resource
+```
+
+The response includes the configured resource URL, authorization server list, `bearer_methods_supported = ["header"]`, and configured scopes.
+`resource` is the canonical public MCP endpoint URL and must be configured explicitly.
+Levitate does not derive it from issuer, audience, request host, or local bind address.
+
+Unauthenticated or invalid-auth MCP requests keep the generic JSON body:
+
+```json
+{ "error": "auth failed" }
+```
+
+When protected resource metadata is enabled, the same `401` response includes:
+
+```http
+WWW-Authenticate: Bearer resource_metadata="https://levitate.example.com/.well-known/oauth-protected-resource"
+```
+
+By default, Levitate derives that metadata URL from the configured resource origin.
+Set `oauth.resource.metadata_url` only when the public metadata URL needs an explicit override.
+
 ## Tool Policy
 
 Levitate filters backend tools before advertising them to remote clients.
@@ -217,7 +270,7 @@ or:
 ngrok http 8787
 ```
 
-Configure the AI app connector to use the public HTTPS `/mcp` URL and bearer token.
+Configure the AI app connector to use the public HTTPS MCP URL and bearer token.
 
 ## Smoke Tests
 
@@ -385,7 +438,8 @@ Levitate uses the official `@modelcontextprotocol/sdk` v1 Streamable HTTP implem
 - remote endpoint: `WebStandardStreamableHTTPServerTransport`
 - HTTP framework: Hono, following the SDK Hono example
 
-The remote endpoint is `/mcp` and uses JSON responses from Streamable HTTP for straightforward request/response behavior.
+The remote endpoint defaults to `/mcp` and uses JSON responses from Streamable HTTP for straightforward request/response behavior.
+Deployments can change the endpoint path with `server.mcp_path`.
 Compatibility should be validated against each target remote MCP host because Claude, ChatGPT, and other hosts may differ in connector rollout details.
 
 ## Non-Goals

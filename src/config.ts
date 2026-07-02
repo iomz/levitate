@@ -9,10 +9,41 @@ const BearerAuthSchema = z.object({
     token_env: z.string().min(1).optional(),
   });
 
+const McpPathSchema = z.string().min(1).refine(
+  (value) => value.startsWith("/"),
+  "server.mcp_path must start with /",
+);
+
 const HttpsUrlSchema = z.string().url().refine(
   (value) => new URL(value).protocol === "https:",
   "OIDC URLs must use https",
 );
+
+const OAuthResourceSchema = z.object({
+  enabled: z.boolean().default(false),
+  resource: HttpsUrlSchema.optional(),
+  authorization_servers: z.array(HttpsUrlSchema).default([]),
+  scopes_supported: z.array(z.string().min(1)).default([]),
+  metadata_url: HttpsUrlSchema.optional(),
+}).superRefine((value, context) => {
+  if (!value.enabled) return;
+
+  if (!value.resource) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "oauth.resource.resource is required when oauth.resource.enabled is true",
+      path: ["resource"],
+    });
+  }
+
+  if (!value.authorization_servers.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "oauth.resource.authorization_servers must be non-empty when oauth.resource.enabled is true",
+      path: ["authorization_servers"],
+    });
+  }
+});
 
 const AuthSchema = z.union([
   BearerAuthSchema,
@@ -40,6 +71,7 @@ const ConfigSchema = z.object({
     host: z.string().min(1).default("127.0.0.1"),
     port: z.coerce.number().int().positive().max(65535).default(8787),
     log_level: z.enum(["debug", "info", "warn", "error"]).default("info"),
+    mcp_path: McpPathSchema.default("/mcp"),
   }),
   stdio: z.object({
     command: z.string().min(1),
@@ -52,6 +84,9 @@ const ConfigSchema = z.object({
     file: z.string().min(1).optional(),
   }).default({}),
   auth: AuthSchema,
+  oauth: z.object({
+    resource: OAuthResourceSchema.default({ enabled: false }),
+  }).default({ resource: { enabled: false } }),
   tools: z.object({
     allow: z.array(z.string().min(1)).optional(),
     deny: z.array(z.string().min(1)).default([]),

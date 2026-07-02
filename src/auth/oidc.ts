@@ -27,11 +27,10 @@ export class OidcJwtAuthenticator implements Authenticator {
 
   async authenticate(request: Request): Promise<AuthResult> {
     const token = parseBearerToken(request.headers.get("authorization"));
-    const payload = await this.verifyToken(token);
-    return { subject: payload.sub };
+    return this.verifyToken(token);
   }
 
-  async verifyToken(token: string): Promise<{ sub: string; email?: string }> {
+  async verifyToken(token: string): Promise<AuthResult> {
     const payload = await this.verifyJwt(token);
 
     if (!payload.sub) {
@@ -51,7 +50,17 @@ export class OidcJwtAuthenticator implements Authenticator {
       throw new AuthError("jwt email not allowed");
     }
 
-    return { sub: payload.sub, email };
+    const result: AuthResult = {
+      kind: "oidc",
+      subject: payload.sub,
+      scopes: getScopes(payload),
+      audience: payload.aud,
+      issuer: payload.iss,
+    };
+    const clientId = getClientId(payload);
+    if (email) result.email = email;
+    if (clientId) result.clientId = clientId;
+    return result;
   }
 
   private async verifyJwt(token: string): Promise<JWTPayload> {
@@ -79,6 +88,17 @@ export function parseBearerToken(authorization: string | null): string {
 
 function getEmail(payload: JWTPayload): string | undefined {
   return typeof payload.email === "string" ? payload.email : undefined;
+}
+
+export function getClientId(payload: JWTPayload): string | undefined {
+  if (typeof payload.client_id === "string") return payload.client_id;
+  if (typeof payload.azp === "string") return payload.azp;
+  return undefined;
+}
+
+function getScopes(payload: JWTPayload): string[] {
+  if (typeof payload.scope !== "string") return [];
+  return payload.scope.split(" ").map((scope) => scope.trim()).filter(Boolean);
 }
 
 export function defaultJwksUri(issuer: string): string {

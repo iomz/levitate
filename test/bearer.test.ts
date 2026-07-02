@@ -8,7 +8,7 @@ describe("bearer auth", () => {
       headers: { authorization: "Bearer secret" },
     }));
 
-    expect(result.subject).toBe("bearer-token");
+    expect(result).toEqual({ kind: "bearer", subject: "bearer-token", scopes: [] });
   });
 
   it("rejects invalid bearer token", async () => {
@@ -19,8 +19,8 @@ describe("bearer auth", () => {
   });
 
   it("validates authorization header helper", () => {
-    expect(validateBearerAuthorization("Bearer secret", "secret").subject)
-      .toBe("bearer-token");
+    expect(validateBearerAuthorization("Bearer secret", "secret"))
+      .toEqual({ kind: "bearer", subject: "bearer-token", scopes: [] });
     expect(() => validateBearerAuthorization(null, "secret")).toThrow();
   });
 });
