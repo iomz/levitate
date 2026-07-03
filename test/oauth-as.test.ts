@@ -123,6 +123,27 @@ describe("oauth authorization server facade", () => {
     }, "invalid_client_metadata");
   });
 
+  it("requires redirect prefixes to match origin and path boundaries", async () => {
+    const context = await createTestApp({ allowedRedirectUriPrefixes: ["https://chatgpt.com/connector/oauth"] });
+
+    await expectRegistrationError(context.app, {
+      redirect_uris: ["https://chatgpt.com.evil.example/connector/oauth/callback"],
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }, "invalid_redirect_uri");
+
+    await expectRegistrationError(context.app, {
+      redirect_uris: ["https://chatgpt.com/connector/oauthish/callback"],
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }, "invalid_redirect_uri");
+
+    const response = await registerClient(context.app);
+    expect(response.status).toBe(201);
+  });
+
   it("rejects invalid authorization requests", async () => {
     const context = await createTestApp();
     const client = await registerAndReadClient(context.app);
@@ -317,7 +338,7 @@ describe("oauth authorization server facade", () => {
   });
 });
 
-async function createTestApp(options: { codeTtlSeconds?: number } = {}) {
+async function createTestApp(options: TestOptions = {}) {
   const context = createTestConfig(options);
   const keys = await loadAuthorizationServerKeys(context.config);
   const oauthAuthorizationServer = createOAuthAuthorizationServer(context.config, keys, logger);
@@ -339,7 +360,12 @@ async function createTestApp(options: { codeTtlSeconds?: number } = {}) {
   };
 }
 
-function createTestConfig(options: { codeTtlSeconds?: number } = {}) {
+interface TestOptions {
+  allowedRedirectUriPrefixes?: string[];
+  codeTtlSeconds?: number;
+}
+
+function createTestConfig(options: TestOptions = {}) {
   const dir = mkdtempSync(join(tmpdir(), "levitate-oauth-as-"));
   const privateKeyFile = join(dir, "private.pem");
   const clientStoreFile = join(dir, "clients.json");
@@ -375,7 +401,7 @@ function createTestConfig(options: { codeTtlSeconds?: number } = {}) {
         issuer: "https://levitate.example.com",
         subject: "local-user",
         approval: "auto",
-        allowed_redirect_uri_prefixes: ["https://chatgpt.com/connector/oauth/"],
+        allowed_redirect_uri_prefixes: options.allowedRedirectUriPrefixes ?? ["https://chatgpt.com/connector/oauth/"],
         scopes_supported: ["brain:read", "brain:write"],
         default_scopes: ["brain:read"],
         access_token_ttl_seconds: 3600,

@@ -236,7 +236,18 @@ function isAllowedRedirectUri(uri: string, config: LevitateConfig): boolean {
     return false;
   }
   if (parsed.protocol !== "https:") return false;
-  return config.oauth.as.allowed_redirect_uri_prefixes.some((prefix) => uri.startsWith(prefix));
+  return config.oauth.as.allowed_redirect_uri_prefixes.some((prefix) => {
+    let allowed: URL;
+    try {
+      allowed = new URL(prefix);
+    } catch {
+      return false;
+    }
+    if (allowed.protocol !== "https:" || parsed.origin !== allowed.origin) return false;
+    if (parsed.pathname === allowed.pathname) return true;
+    if (allowed.pathname.endsWith("/")) return parsed.pathname.startsWith(allowed.pathname);
+    return parsed.pathname.startsWith(`${allowed.pathname}/`);
+  });
 }
 
 function isExactRegisteredRedirectUri(client: RegisteredClient, redirectUri: string): boolean {
