@@ -4,13 +4,21 @@ import { getConfigPath, loadConfig } from "./config.js";
 import { createLogger } from "./logging.js";
 import { StdioMcpBackend } from "./mcp/backend.js";
 import { loadInstructions } from "./mcp/instructions.js";
+import { loadAuthorizationServerKeys } from "./oauth/as/keys.js";
+import { createOAuthAuthorizationServer } from "./oauth/as/routes.js";
 import { startHttpServer } from "./server.js";
 
 async function main(): Promise<void> {
   const config = await loadConfig(getConfigPath());
   const logger = createLogger(config.server.log_level);
+  const authorizationServerKeys = config.oauth.as.enabled
+    ? await loadAuthorizationServerKeys(config)
+    : undefined;
+  const oauthAuthorizationServer = authorizationServerKeys
+    ? createOAuthAuthorizationServer(config, authorizationServerKeys, logger)
+    : undefined;
 
-  const authenticator = createAuthenticator(config.auth);
+  const authenticator = createAuthenticator(config, authorizationServerKeys);
   const instructions = await loadInstructions(config);
   const backend = new StdioMcpBackend(config, logger);
 
@@ -26,6 +34,7 @@ async function main(): Promise<void> {
     backend,
     instructions,
     logger,
+    oauthAuthorizationServer,
   });
 
   const shutdown = async (signal: string) => {

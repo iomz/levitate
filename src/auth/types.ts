@@ -1,5 +1,5 @@
 export interface AuthResult {
-  kind: "bearer" | "oidc";
+  kind: "bearer" | "oidc" | "levitate";
   subject?: string;
   email?: string;
   clientId?: string;
