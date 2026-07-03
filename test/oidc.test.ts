@@ -55,6 +55,15 @@ const config: LevitateConfig = {
       authorization_servers: [],
       scopes_supported: [],
     },
+    as: {
+      enabled: false,
+      allowed_redirect_uri_prefixes: [],
+      scopes_supported: [],
+      default_scopes: [],
+      access_token_ttl_seconds: 3600,
+      authorization_code_ttl_seconds: 300,
+      keys: {},
+    },
   },
   tools: {
     deny: [],

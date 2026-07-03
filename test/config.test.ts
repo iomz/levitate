@@ -178,6 +178,167 @@ metadata_url = "http://levitate.example.com/.well-known/oauth-protected-resource
 `)).toThrow("OIDC URLs must use https");
   });
 
+  it("parses oauth authorization server config", () => {
+    const config = parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "levitate"
+
+[oauth.resource]
+enabled = true
+resource = "https://levitate.example.com/brain/mcp"
+authorization_servers = ["https://levitate.example.com"]
+scopes_supported = ["brain:read", "brain:write"]
+
+[oauth.as]
+enabled = true
+issuer = "https://levitate.example.com"
+subject = "local-user"
+approval = "auto"
+allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
+scopes_supported = ["brain:read", "brain:write"]
+default_scopes = ["brain:read"]
+client_store_file = "state/oauth-clients.json"
+
+[oauth.as.keys]
+private_key_file = "state/oauth-private-key.pem"
+key_id = "levitate-local-1"
+`);
+
+    expect(config.auth.mode).toBe("levitate");
+    expect(config.oauth.as.enabled).toBe(true);
+    expect(config.oauth.as.issuer).toBe("https://levitate.example.com");
+    expect(config.oauth.as.access_token_ttl_seconds).toBe(3600);
+    expect(config.oauth.as.authorization_code_ttl_seconds).toBe(300);
+  });
+
+  it("rejects enabled oauth authorization server without required config", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "levitate"
+
+[oauth.as]
+enabled = true
+`)).toThrow("oauth.as.issuer is required when oauth.as.enabled is true");
+  });
+
+  it("rejects oauth authorization server default scopes outside supported scopes", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "levitate"
+
+[oauth.resource]
+enabled = true
+resource = "https://levitate.example.com/brain/mcp"
+authorization_servers = ["https://levitate.example.com"]
+scopes_supported = ["brain:read", "brain:write"]
+
+[oauth.as]
+enabled = true
+issuer = "https://levitate.example.com"
+subject = "local-user"
+approval = "auto"
+allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
+scopes_supported = ["brain:read"]
+default_scopes = ["brain:write"]
+client_store_file = "state/oauth-clients.json"
+
+[oauth.as.keys]
+private_key_file = "state/oauth-private-key.pem"
+key_id = "levitate-local-1"
+`)).toThrow("oauth.as.default_scopes must be a subset of oauth.as.scopes_supported");
+  });
+
+  it("rejects oauth resource metadata without authorization server issuer", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "levitate"
+
+[oauth.resource]
+enabled = true
+resource = "https://levitate.example.com/brain/mcp"
+authorization_servers = ["https://auth.example.com"]
+scopes_supported = ["brain:read"]
+
+[oauth.as]
+enabled = true
+issuer = "https://levitate.example.com"
+subject = "local-user"
+approval = "auto"
+allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
+scopes_supported = ["brain:read"]
+default_scopes = ["brain:read"]
+client_store_file = "state/oauth-clients.json"
+
+[oauth.as.keys]
+private_key_file = "state/oauth-private-key.pem"
+key_id = "levitate-local-1"
+`)).toThrow("oauth.resource.authorization_servers must include oauth.as.issuer when both are enabled");
+  });
+
+  it("rejects levitate auth mode without enabled oauth authorization server", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "levitate"
+`)).toThrow("oauth.as.enabled is required when auth.mode is levitate");
+  });
+
+  it("rejects levitate auth mode without oauth resource", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "levitate"
+
+[oauth.as]
+enabled = true
+issuer = "https://levitate.example.com"
+subject = "local-user"
+approval = "auto"
+allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
+scopes_supported = ["brain:read"]
+default_scopes = ["brain:read"]
+client_store_file = "state/oauth-clients.json"
+
+[oauth.as.keys]
+private_key_file = "state/oauth-private-key.pem"
+key_id = "levitate-local-1"
+`)).toThrow("oauth.resource.resource is required when auth.mode is levitate");
+  });
+
   it("rejects bearer auth without token source", () => {
     expect(() => parseConfigText(`
 [server]

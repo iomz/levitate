@@ -8,6 +8,7 @@ import type { LevitateConfig } from "./config.js";
 import type { Logger } from "./logging.js";
 import type { StdioMcpBackend } from "./mcp/backend.js";
 import { handleMcpRequest } from "./mcp/proxy.js";
+import type { OAuthAuthorizationServer } from "./oauth/as/routes.js";
 
 export interface AppContext {
   config: LevitateConfig;
@@ -15,6 +16,7 @@ export interface AppContext {
   backend: StdioMcpBackend;
   instructions?: string;
   logger: Logger;
+  oauthAuthorizationServer?: OAuthAuthorizationServer;
 }
 
 export function createApp(context: AppContext): Hono {
@@ -49,6 +51,8 @@ export function createApp(context: AppContext): Hono {
       });
     });
   }
+
+  context.oauthAuthorizationServer?.registerRoutes(app);
 
   app.all(context.config.server.mcp_path, async (c) => {
     if (c.req.method === "OPTIONS") return c.body(null, 204);
