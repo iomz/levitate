@@ -204,6 +204,14 @@ const ConfigSchema = z.object({
     });
   }
 
+  if (value.auth.mode === "levitate" && !value.oauth.resource.resource) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "oauth.resource.resource is required when auth.mode is levitate",
+      path: ["oauth", "resource", "resource"],
+    });
+  }
+
   if (value.oauth.resource.enabled && value.oauth.as.enabled) {
     const issuer = value.oauth.as.issuer;
     if (issuer && !value.oauth.resource.authorization_servers.includes(issuer)) {

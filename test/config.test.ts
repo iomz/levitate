@@ -312,6 +312,33 @@ mode = "levitate"
 `)).toThrow("oauth.as.enabled is required when auth.mode is levitate");
   });
 
+  it("rejects levitate auth mode without oauth resource", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "levitate"
+
+[oauth.as]
+enabled = true
+issuer = "https://levitate.example.com"
+subject = "local-user"
+approval = "auto"
+allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
+scopes_supported = ["brain:read"]
+default_scopes = ["brain:read"]
+client_store_file = "state/oauth-clients.json"
+
+[oauth.as.keys]
+private_key_file = "state/oauth-private-key.pem"
+key_id = "levitate-local-1"
+`)).toThrow("oauth.resource.resource is required when auth.mode is levitate");
+  });
+
   it("rejects bearer auth without token source", () => {
     expect(() => parseConfigText(`
 [server]

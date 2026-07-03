@@ -19,21 +19,24 @@ interface ClientStoreFile {
 
 export class JsonClientStore {
   private readonly path: string;
+  private writeChain: Promise<void> = Promise.resolve();
 
   constructor(path: string) {
     this.path = resolve(path);
   }
 
   async add(client: Omit<RegisteredClient, "client_id" | "created_at">): Promise<RegisteredClient> {
-    const data = await this.read();
-    const registered: RegisteredClient = {
-      ...client,
-      client_id: randomUUID(),
-      created_at: new Date().toISOString(),
-    };
-    data.clients.push(registered);
-    await this.write(data);
-    return registered;
+    return this.withWriteLock(async () => {
+      const data = await this.read();
+      const registered: RegisteredClient = {
+        ...client,
+        client_id: randomUUID(),
+        created_at: new Date().toISOString(),
+      };
+      data.clients.push(registered);
+      await this.write(data);
+      return registered;
+    });
   }
 
   async get(clientId: string): Promise<RegisteredClient | undefined> {
@@ -58,8 +61,14 @@ export class JsonClientStore {
 
   private async write(data: ClientStoreFile): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true });
-    const tempPath = `${this.path}.${process.pid}.${Date.now()}.tmp`;
+    const tempPath = `${this.path}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
     await writeFile(tempPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
     await rename(tempPath, this.path);
+  }
+
+  private async withWriteLock<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.writeChain.then(operation, operation);
+    this.writeChain = run.then(() => undefined, () => undefined);
+    return run;
   }
 }

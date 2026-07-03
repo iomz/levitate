@@ -33,6 +33,9 @@ const backend = {
   },
 } as unknown as StdioMcpBackend;
 
+const validVerifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
+const otherValidVerifier = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+
 describe("oauth authorization server facade", () => {
   it("serves authorization server metadata and jwks", async () => {
     const context = await createTestApp();
@@ -83,6 +86,15 @@ describe("oauth authorization server facade", () => {
     expect(context.clientStoreText()).toContain(client.client_id);
   });
 
+  it("persists concurrent client registrations", async () => {
+    const context = await createTestApp();
+    const responses = await Promise.all(Array.from({ length: 8 }, () => registerClient(context.app)));
+
+    expect(responses.every((response) => response.status === 201)).toBe(true);
+    const stored = JSON.parse(context.clientStoreText()) as { clients: Array<{ client_id: string }> };
+    expect(stored.clients).toHaveLength(8);
+  });
+
   it("rejects invalid dynamic client registration metadata", async () => {
     const context = await createTestApp();
 
@@ -111,6 +123,20 @@ describe("oauth authorization server facade", () => {
       redirect_uris: ["https://chatgpt.com/connector/oauth/callback"],
       grant_types: ["client_credentials"],
       response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }, "invalid_client_metadata");
+
+    await expectRegistrationError(context.app, {
+      redirect_uris: ["https://chatgpt.com/connector/oauth/callback"],
+      grant_types: ["authorization_code", "client_credentials"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }, "invalid_client_metadata");
+
+    await expectRegistrationError(context.app, {
+      redirect_uris: ["https://chatgpt.com/connector/oauth/callback"],
+      grant_types: ["authorization_code"],
+      response_types: ["code", "token"],
       token_endpoint_auth_method: "none",
     }, "invalid_client_metadata");
 
@@ -147,7 +173,7 @@ describe("oauth authorization server facade", () => {
   it("rejects invalid authorization requests", async () => {
     const context = await createTestApp();
     const client = await registerAndReadClient(context.app);
-    const challenge = pkceChallenge("verifier");
+    const challenge = pkceChallenge(validVerifier);
 
     const unknown = await authorize(context.app, {
       client_id: "missing",
@@ -173,6 +199,14 @@ describe("oauth authorization server facade", () => {
     expect(missingPkce.status).toBe(302);
     expect(missingPkce.headers.get("location")).toContain("error=invalid_request");
 
+    const invalidPkce = await authorize(context.app, {
+      client_id: client.client_id,
+      redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+      code_challenge: "short",
+      resource: "https://levitate.example.com/brain/mcp",
+    });
+    expect(invalidPkce.headers.get("location")).toContain("error=invalid_request");
+
     const wrongResource = await authorize(context.app, {
       client_id: client.client_id,
       redirect_uri: "https://chatgpt.com/connector/oauth/callback",
@@ -191,13 +225,28 @@ describe("oauth authorization server facade", () => {
     expect(badScope.headers.get("location")).toContain("error=invalid_scope");
   });
 
+  it("limits requested scopes to the registered client scope", async () => {
+    const context = await createTestApp();
+    const client = await registerAndReadClient(context.app, { scope: "brain:read" });
+
+    const response = await authorize(context.app, {
+      client_id: client.client_id,
+      redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+      code_challenge: pkceChallenge(validVerifier),
+      resource: "https://levitate.example.com/brain/mcp",
+      scope: "brain:write",
+    });
+
+    expect(response.headers.get("location")).toContain("error=invalid_scope");
+  });
+
   it("authorizes with pkce and preserves state", async () => {
     const context = await createTestApp();
     const client = await registerAndReadClient(context.app);
     const response = await authorize(context.app, {
       client_id: client.client_id,
       redirect_uri: "https://chatgpt.com/connector/oauth/callback",
-      code_challenge: pkceChallenge("verifier"),
+      code_challenge: pkceChallenge(validVerifier),
       resource: "https://levitate.example.com/brain/mcp",
       state: "state-1",
     });
@@ -212,7 +261,7 @@ describe("oauth authorization server facade", () => {
   it("exchanges an authorization code for an RS256 access token", async () => {
     const context = await createTestApp();
     const client = await registerAndReadClient(context.app);
-    const verifier = "verifier";
+    const verifier = validVerifier;
     const code = await authorizeAndGetCode(context.app, client.client_id, verifier);
 
     const response = await token(context.app, {
@@ -246,7 +295,7 @@ describe("oauth authorization server facade", () => {
     const context = await createTestApp();
     const client = await registerAndReadClient(context.app);
     const otherClient = await registerAndReadClient(context.app);
-    const verifier = "verifier";
+    const verifier = validVerifier;
     const code = await authorizeAndGetCode(context.app, client.client_id, verifier);
 
     await expectTokenError(context.app, { code, client_id: otherClient.client_id, code_verifier: verifier });
@@ -265,7 +314,7 @@ describe("oauth authorization server facade", () => {
     await expectTokenError(context.app, {
       code,
       client_id: client.client_id,
-      code_verifier: "wrong-verifier",
+      code_verifier: otherValidVerifier,
     });
 
     const success = await token(context.app, validTokenRequest(code, client.client_id, verifier));
@@ -276,17 +325,17 @@ describe("oauth authorization server facade", () => {
   it("rejects expired authorization codes", async () => {
     const context = await createTestApp({ codeTtlSeconds: 1 });
     const client = await registerAndReadClient(context.app);
-    const code = await authorizeAndGetCode(context.app, client.client_id, "verifier");
+    const code = await authorizeAndGetCode(context.app, client.client_id, validVerifier);
 
     await new Promise((resolve) => setTimeout(resolve, 1100));
-    await expectTokenError(context.app, { code, client_id: client.client_id, code_verifier: "verifier" });
+    await expectTokenError(context.app, { code, client_id: client.client_id, code_verifier: validVerifier });
   });
 
   it("accepts Levitate-issued JWTs on the MCP route", async () => {
     const context = await createTestApp();
     const client = await registerAndReadClient(context.app);
-    const code = await authorizeAndGetCode(context.app, client.client_id, "verifier");
-    const issued = await token(context.app, validTokenRequest(code, client.client_id, "verifier"));
+    const code = await authorizeAndGetCode(context.app, client.client_id, validVerifier);
+    const issued = await token(context.app, validTokenRequest(code, client.client_id, validVerifier));
     const body = await issued.json() as { access_token: string };
 
     const response = await context.app.fetch(new Request("http://localhost/mcp", {
@@ -427,7 +476,7 @@ function createTestConfig(options: TestOptions = {}) {
   };
 }
 
-function registerClient(app: Awaited<ReturnType<typeof createTestApp>>["app"]) {
+function registerClient(app: Awaited<ReturnType<typeof createTestApp>>["app"], overrides: { scope?: string } = {}) {
   return app.fetch(new Request("http://localhost/oauth/register", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -437,12 +486,16 @@ function registerClient(app: Awaited<ReturnType<typeof createTestApp>>["app"]) {
       grant_types: ["authorization_code"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
+      ...overrides,
     }),
   }));
 }
 
-async function registerAndReadClient(app: Awaited<ReturnType<typeof createTestApp>>["app"]) {
-  const response = await registerClient(app);
+async function registerAndReadClient(
+  app: Awaited<ReturnType<typeof createTestApp>>["app"],
+  overrides: { scope?: string } = {},
+) {
+  const response = await registerClient(app, overrides);
   return await response.json() as { client_id: string };
 }
 
@@ -503,7 +556,7 @@ async function expectTokenError(
   const response = await token(app, validTokenRequest(
     overrides.code,
     overrides.client_id ?? "client",
-    overrides.code_verifier ?? "verifier",
+    overrides.code_verifier ?? validVerifier,
     overrides.redirect_uri,
     overrides.resource,
   ));

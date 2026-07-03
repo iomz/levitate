@@ -116,14 +116,14 @@ export function createOAuthAuthorizationServer(
           return c.json({ error: "invalid_request" }, 400);
         }
         const codeChallenge = url.searchParams.get("code_challenge");
-        if (!codeChallenge) return redirectError("invalid_request");
+        if (!codeChallenge || !isValidPkceS256Challenge(codeChallenge)) return redirectError("invalid_request");
         if (url.searchParams.get("code_challenge_method") !== "S256") return redirectError("invalid_request");
 
         const resource = url.searchParams.get("resource");
         const configuredResource = config.oauth.resource.resource;
         if (!resource || resource !== configuredResource) return redirectError("invalid_target");
 
-        const scopes = parseRequestedScopes(url.searchParams.get("scope"), config);
+        const scopes = parseRequestedScopes(url.searchParams.get("scope"), config, client);
         if (!scopes) return redirectError("invalid_scope");
 
         const code = codes.create({
@@ -173,6 +173,7 @@ export function createOAuthAuthorizationServer(
           record.clientId !== clientId ||
           record.redirectUri !== redirectUri ||
           record.resource !== resource ||
+          !isValidPkceVerifier(codeVerifier) ||
           !verifyPkceS256(codeVerifier, record.codeChallenge)
         ) {
           return c.json({ error: "invalid_grant" }, 400);
@@ -206,11 +207,11 @@ function validateRegistration(body: RegisterRequest, config: LevitateConfig): st
     return "invalid_redirect_uri";
   }
 
-  if (!Array.isArray(body.grant_types) || !body.grant_types.includes("authorization_code")) {
+  if (!isExactStringArray(body.grant_types, ["authorization_code"])) {
     return "invalid_client_metadata";
   }
 
-  if (!Array.isArray(body.response_types) || !body.response_types.includes("code")) {
+  if (!isExactStringArray(body.response_types, ["code"])) {
     return "invalid_client_metadata";
   }
 
@@ -254,15 +255,34 @@ function isExactRegisteredRedirectUri(client: RegisteredClient, redirectUri: str
   return client.redirect_uris.includes(redirectUri);
 }
 
-function parseRequestedScopes(scope: string | null, config: LevitateConfig): string[] | undefined {
+function parseRequestedScopes(scope: string | null, config: LevitateConfig, client: RegisteredClient): string[] | undefined {
   const requested = scope
     ? scope.split(" ").map((entry) => entry.trim()).filter(Boolean)
     : config.oauth.as.default_scopes;
+  const allowedForClient = client.scope
+    ? client.scope.split(" ").map((entry) => entry.trim()).filter(Boolean)
+    : config.oauth.as.default_scopes;
   if (!requested.length) return undefined;
   if (!requested.every((entry) => config.oauth.as.scopes_supported.includes(entry))) return undefined;
+  if (!requested.every((entry) => allowedForClient.includes(entry))) return undefined;
   return requested;
 }
 
 function stringFormValue(value: FormDataEntryValue | FormDataEntryValue[] | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function isValidPkceVerifier(value: string): boolean {
+  return /^[A-Za-z0-9._~-]{43,128}$/.test(value);
+}
+
+function isValidPkceS256Challenge(value: string): boolean {
+  return /^[A-Za-z0-9_-]{43}$/.test(value);
+}
+
+function isExactStringArray(value: unknown, expected: string[]): boolean {
+  return Array.isArray(value)
+    && value.length === expected.length
+    && expected.every((entry) => value.includes(entry))
+    && value.every((entry) => typeof entry === "string");
 }
