@@ -216,6 +216,83 @@ WWW-Authenticate: Bearer resource_metadata="https://levitate.example.com/.well-k
 By default, Levitate derives that metadata URL from the configured resource origin.
 Set `oauth.resource.metadata_url` only when the public metadata URL needs an explicit override.
 
+### Local OAuth authorization server facade
+
+Levitate can run a private local OAuth authorization server facade for ChatGPT Custom MCP registration.
+This exposes discovery, Dynamic Client Registration, authorization-code with PKCE, token issuance, and JWKS endpoints through the same HTTP server.
+Use this only for private deployments that still require authenticated MCP requests.
+Do not expose private local tools without auth and strict redirect URI configuration.
+
+Example:
+
+```toml
+[server]
+mcp_path = "/brain/mcp"
+
+[oauth.resource]
+enabled = true
+resource = "https://levitate.example.com/brain/mcp"
+authorization_servers = ["https://levitate.example.com"]
+scopes_supported = ["brain:read", "brain:write"]
+
+[oauth.as]
+enabled = true
+issuer = "https://levitate.example.com"
+subject = "local-user"
+approval = "auto"
+allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
+scopes_supported = ["brain:read", "brain:write"]
+default_scopes = ["brain:read"]
+access_token_ttl_seconds = 3600
+authorization_code_ttl_seconds = 300
+client_store_file = "state/oauth-clients.json"
+
+[oauth.as.keys]
+private_key_file = "state/oauth-private-key.pem"
+key_id = "levitate-local-1"
+
+[auth]
+mode = "levitate"
+```
+
+`oauth.as.keys.private_key_file` must point to an existing RSA private key.
+Levitate fails startup when the local authorization server is enabled and the key is missing, unreadable, invalid, or not usable for RS256.
+Levitate does not generate signing keys at runtime.
+
+The local facade serves:
+
+```text
+GET  /.well-known/oauth-authorization-server
+POST /oauth/register
+GET  /oauth/authorize
+POST /oauth/token
+GET  /.well-known/jwks.json
+```
+
+ChatGPT Custom MCP flow:
+
+```text
+ChatGPT
+  -> reads /.well-known/oauth-protected-resource
+  -> reads /.well-known/oauth-authorization-server
+  -> registers a public client at /oauth/register
+  -> completes authorization_code + PKCE through /oauth/authorize and /oauth/token
+  -> receives a Levitate-issued RS256 JWT access token
+  -> calls the configured MCP endpoint with Authorization: Bearer <token>
+```
+
+Dynamic Client Registration accepts public clients only.
+Registered redirect URIs must be absolute HTTPS URLs and match `oauth.as.allowed_redirect_uri_prefixes`.
+Levitate does not issue client secrets.
+Authorization codes are short-lived, single-use, and stored in memory only.
+Registered clients persist in the JSON file configured by `oauth.as.client_store_file`.
+
+Access tokens are RS256 JWTs with `iss`, `sub`, `aud`, `scope`, `exp`, `iat`, and `client_id`.
+`auth.mode = "levitate"` validates only Levitate-issued JWTs against the configured issuer, resource audience, public key, expiration, algorithm, and client ID claim.
+Existing `auth.mode = "oidc"` remains available separately for Auth0 and other external RS256 JWKS-backed issuers.
+
+Auth0-backed Dynamic Client Registration, CIMD, refresh tokens, hosted login UI, and multi-user management are not implemented.
+
 ## Tool Policy
 
 Levitate filters backend tools before advertising them to remote clients.
@@ -417,7 +494,7 @@ For local stdio servers that need host files, mount required vault/tool paths an
 
 ## Auth Notes
 
-OIDC/JWT validation runs behind the same `Authenticator` interface as static bearer tokens.
+OIDC/JWT validation and Levitate-issued JWT validation run behind the same `Authenticator` interface as static bearer tokens.
 
 OIDC validation checks:
 
@@ -428,7 +505,18 @@ OIDC validation checks:
 - not-before when present
 - subject or email allowlists when configured
 
-Only RS256 JWTs are accepted. Static bearer auth remains available for local/dev/simple deployments.
+Levitate-issued JWT validation checks:
+
+- JWKS signature from the configured local authorization server key
+- issuer
+- resource audience
+- expiration
+- RS256 algorithm
+- `client_id` claim
+- scopes
+
+Only RS256 JWTs are accepted for OIDC and local authorization server modes.
+Static bearer auth remains available for local/dev/simple deployments.
 
 ## MCP Transport Choice
 
