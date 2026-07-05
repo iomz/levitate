@@ -37,23 +37,28 @@ export function createOAuthAuthorizationServer(
     registerRoutes(app: Hono): void {
       app.get("/.well-known/oauth-authorization-server", (c) => {
         const issuer = asConfig.issuer;
-        return c.json({
+        const metadata: Record<string, unknown> = {
           issuer,
           authorization_endpoint: new URL("/oauth/authorize", issuer).toString(),
           token_endpoint: new URL("/oauth/token", issuer).toString(),
-          registration_endpoint: new URL("/oauth/register", issuer).toString(),
           jwks_uri: new URL("/.well-known/jwks.json", issuer).toString(),
           response_types_supported: ["code"],
           grant_types_supported: ["authorization_code"],
           token_endpoint_auth_methods_supported: ["none"],
           code_challenge_methods_supported: ["S256"],
           scopes_supported: asConfig.scopes_supported,
-        });
+        };
+        if (asConfig.dcr.enabled) {
+          metadata.registration_endpoint = new URL("/oauth/register", issuer).toString();
+        }
+        return c.json(metadata);
       });
 
       app.get("/.well-known/jwks.json", (c) => c.json(keys.jwks));
 
       app.post("/oauth/register", async (c) => {
+        if (!asConfig.dcr.enabled) return c.json({ error: "registration_disabled" }, 404);
+
         let body: RegisterRequest;
         try {
           body = await c.req.json<RegisterRequest>();

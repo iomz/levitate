@@ -57,6 +57,9 @@ const config: LevitateConfig = {
     },
     as: {
       enabled: false,
+      dcr: {
+        enabled: false,
+      },
       allowed_redirect_uri_prefixes: [],
       scopes_supported: [],
       default_scopes: [],

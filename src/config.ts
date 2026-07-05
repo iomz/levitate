@@ -50,6 +50,9 @@ const OAuthAuthorizationServerSchema = z.object({
   issuer: HttpsUrlSchema.optional(),
   subject: z.string().min(1).optional(),
   approval: z.literal("auto").optional(),
+  dcr: z.object({
+    enabled: z.boolean().default(false),
+  }).default({ enabled: false }),
   allowed_redirect_uri_prefixes: z.array(HttpsUrlSchema).default([]),
   scopes_supported: z.array(z.string().min(1)).default([]),
   default_scopes: z.array(z.string().min(1)).default([]),

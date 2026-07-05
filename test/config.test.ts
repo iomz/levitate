@@ -208,10 +208,14 @@ client_store_file = "state/oauth-clients.json"
 [oauth.as.keys]
 private_key_file = "state/oauth-private-key.pem"
 key_id = "levitate-local-1"
+
+[oauth.as.dcr]
+enabled = true
 `);
 
     expect(config.auth.mode).toBe("levitate");
     expect(config.oauth.as.enabled).toBe(true);
+    expect(config.oauth.as.dcr.enabled).toBe(true);
     expect(config.oauth.as.issuer).toBe("https://levitate.example.com");
     expect(config.oauth.as.access_token_ttl_seconds).toBe(3600);
     expect(config.oauth.as.authorization_code_ttl_seconds).toBe(300);

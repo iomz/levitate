@@ -61,6 +61,32 @@ describe("oauth authorization server facade", () => {
     expect(body.keys[0].kty).toBe("RSA");
   });
 
+  it("omits registration metadata and rejects registration when dcr is disabled", async () => {
+    const context = await createTestApp({ dcrEnabled: false });
+
+    const metadata = await context.app.fetch(new Request("http://localhost/.well-known/oauth-authorization-server"));
+    const metadataBody = await metadata.json() as { registration_endpoint?: string };
+    expect(metadataBody.registration_endpoint).toBeUndefined();
+
+    const response = await registerClient(context.app);
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "registration_disabled" });
+  });
+
+  it("keeps existing clients usable when dcr is disabled", async () => {
+    const context = await createTestApp();
+    const client = await registerAndReadClient(context.app);
+
+    context.config.oauth.as.dcr.enabled = false;
+
+    const blockedRegistration = await registerClient(context.app);
+    expect(blockedRegistration.status).toBe(404);
+
+    const code = await authorizeAndGetCode(context.app, client.client_id, validVerifier);
+    const response = await token(context.app, validTokenRequest(code, client.client_id, validVerifier));
+    expect(response.status).toBe(200);
+  });
+
   it("rejects missing or invalid signing keys", async () => {
     const context = createTestConfig();
     context.config.oauth.as.keys.private_key_file = join(context.dir, "missing.pem");
@@ -412,6 +438,7 @@ async function createTestApp(options: TestOptions = {}) {
 interface TestOptions {
   allowedRedirectUriPrefixes?: string[];
   codeTtlSeconds?: number;
+  dcrEnabled?: boolean;
 }
 
 function createTestConfig(options: TestOptions = {}) {
@@ -450,6 +477,9 @@ function createTestConfig(options: TestOptions = {}) {
         issuer: "https://levitate.example.com",
         subject: "local-user",
         approval: "auto",
+        dcr: {
+          enabled: options.dcrEnabled ?? true,
+        },
         allowed_redirect_uri_prefixes: options.allowedRedirectUriPrefixes ?? ["https://chatgpt.com/connector/oauth/"],
         scopes_supported: ["brain:read", "brain:write"],
         default_scopes: ["brain:read"],

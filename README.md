@@ -251,6 +251,9 @@ client_store_file = "state/oauth-clients.json"
 private_key_file = "state/oauth-private-key.pem"
 key_id = "levitate-local-1"
 
+[oauth.as.dcr]
+enabled = true
+
 [auth]
 mode = "levitate"
 ```
@@ -286,6 +289,10 @@ Registered redirect URIs must be absolute HTTPS URLs and match `oauth.as.allowed
 Levitate does not issue client secrets.
 Authorization codes are short-lived, single-use, and stored in memory only.
 Registered clients persist in the JSON file configured by `oauth.as.client_store_file`.
+
+DCR is closed by default.
+Temporarily set `[oauth.as.dcr] enabled = true` while installing a ChatGPT Custom App, then set it back to `false` after the client appears in `oauth.as.client_store_file`.
+Existing registered clients can still authorize and exchange tokens while DCR is disabled.
 
 Access tokens are RS256 JWTs with `iss`, `sub`, `aud`, `scope`, `exp`, `iat`, and `client_id`.
 `auth.mode = "levitate"` validates only Levitate-issued JWTs against the configured issuer, resource audience, public key, expiration, algorithm, and client ID claim.
