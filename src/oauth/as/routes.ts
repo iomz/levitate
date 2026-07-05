@@ -183,6 +183,14 @@ export function createOAuthAuthorizationServer(
           return c.redirect(location.toString(), 302);
         }
 
+        const client = await clients.get(pending.clientId);
+        if (!client || client.revoked_at) {
+          const location = new URL(pending.redirectUri);
+          location.searchParams.set("error", "invalid_client");
+          if (pending.state) location.searchParams.set("state", pending.state);
+          return c.redirect(location.toString(), 302);
+        }
+
         return c.redirect(issueAuthorizationRedirect(pending, codes, config).toString(), 302);
       });
 

@@ -370,6 +370,28 @@ describe("oauth authorization server facade", () => {
     expect(location.searchParams.get("state")).toBe("state-1");
   });
 
+  it("rejects manual approval when the client is revoked while pending", async () => {
+    const context = await createTestApp({ approval: "manual" });
+    const client = await registerAndReadClient(context.app);
+    const response = await authorize(context.app, {
+      client_id: client.client_id,
+      redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+      code_challenge: pkceChallenge(validVerifier),
+      resource: "https://levitate.example.com/brain/mcp",
+      state: "state-1",
+    });
+    const html = await response.text();
+    const store = new JsonClientStore(context.clientStoreFile);
+    await store.revoke(client.client_id);
+
+    const approved = await submitApproval(context.app, html, "approve");
+    expect(approved.status).toBe(302);
+    const location = new URL(approved.headers.get("location") ?? "");
+    expect(location.searchParams.get("error")).toBe("invalid_client");
+    expect(location.searchParams.get("code")).toBeNull();
+    expect(location.searchParams.get("state")).toBe("state-1");
+  });
+
   it("does not render manual approval for unsafe redirect requests", async () => {
     const context = await createTestApp({ approval: "manual" });
     const client = await registerAndReadClient(context.app);
