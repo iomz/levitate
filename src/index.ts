@@ -4,12 +4,19 @@ import { getConfigPath, loadConfig } from "./config.js";
 import { createLogger } from "./logging.js";
 import { StdioMcpBackend } from "./mcp/backend.js";
 import { loadInstructions } from "./mcp/instructions.js";
+import { runOAuthClientsCommand } from "./oauth/as/clients-cli.js";
 import { loadAuthorizationServerKeys } from "./oauth/as/keys.js";
 import { createOAuthAuthorizationServer } from "./oauth/as/routes.js";
 import { startHttpServer } from "./server.js";
 
 async function main(): Promise<void> {
+  const args = process.argv.slice(2);
   const config = await loadConfig(getConfigPath());
+  if (args[0] === "oauth" && args[1] === "clients") {
+    await runOAuthClientsCommand(config, args.slice(2));
+    return;
+  }
+
   const logger = createLogger(config.server.log_level);
   const authorizationServerKeys = config.oauth.as.enabled
     ? await loadAuthorizationServerKeys(config)

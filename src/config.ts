@@ -49,7 +49,11 @@ const OAuthAuthorizationServerSchema = z.object({
   enabled: z.boolean().default(false),
   issuer: HttpsUrlSchema.optional(),
   subject: z.string().min(1).optional(),
-  approval: z.literal("auto").optional(),
+  approval: z.enum(["auto", "manual"]).default("auto"),
+  approval_secret_env: z.string().min(1).optional(),
+  dcr: z.object({
+    enabled: z.boolean().default(false),
+  }).default({ enabled: false }),
   allowed_redirect_uri_prefixes: z.array(HttpsUrlSchema).default([]),
   scopes_supported: z.array(z.string().min(1)).default([]),
   default_scopes: z.array(z.string().min(1)).default([]),
@@ -79,11 +83,11 @@ const OAuthAuthorizationServerSchema = z.object({
     });
   }
 
-  if (value.approval !== "auto") {
+  if (value.approval === "manual" && !value.approval_secret_env) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "oauth.as.approval must be auto when oauth.as.enabled is true",
-      path: ["approval"],
+      message: "oauth.as.approval_secret_env is required when oauth.as.approval is manual",
+      path: ["approval_secret_env"],
     });
   }
 

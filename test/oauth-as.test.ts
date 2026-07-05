@@ -8,8 +8,10 @@ import { createAuthenticator } from "../src/auth/index.js";
 import type { LevitateConfig } from "../src/config.js";
 import type { Logger } from "../src/logging.js";
 import type { StdioMcpBackend } from "../src/mcp/backend.js";
+import { runOAuthClientsCommand } from "../src/oauth/as/clients-cli.js";
 import { loadAuthorizationServerKeys } from "../src/oauth/as/keys.js";
 import { createOAuthAuthorizationServer } from "../src/oauth/as/routes.js";
+import { JsonClientStore } from "../src/oauth/as/store.js";
 import { createApp } from "../src/server.js";
 
 const logger: Logger = {
@@ -61,6 +63,32 @@ describe("oauth authorization server facade", () => {
     expect(body.keys[0].kty).toBe("RSA");
   });
 
+  it("omits registration metadata and rejects registration when dcr is disabled", async () => {
+    const context = await createTestApp({ dcrEnabled: false });
+
+    const metadata = await context.app.fetch(new Request("http://localhost/.well-known/oauth-authorization-server"));
+    const metadataBody = await metadata.json() as { registration_endpoint?: string };
+    expect(metadataBody.registration_endpoint).toBeUndefined();
+
+    const response = await registerClient(context.app);
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "registration_disabled" });
+  });
+
+  it("keeps existing clients usable when dcr is disabled", async () => {
+    const context = await createTestApp();
+    const client = await registerAndReadClient(context.app);
+
+    context.config.oauth.as.dcr.enabled = false;
+
+    const blockedRegistration = await registerClient(context.app);
+    expect(blockedRegistration.status).toBe(404);
+
+    const code = await authorizeAndGetCode(context.app, client.client_id, validVerifier);
+    const response = await token(context.app, validTokenRequest(code, client.client_id, validVerifier));
+    expect(response.status).toBe(200);
+  });
+
   it("rejects missing or invalid signing keys", async () => {
     const context = createTestConfig();
     context.config.oauth.as.keys.private_key_file = join(context.dir, "missing.pem");
@@ -93,6 +121,53 @@ describe("oauth authorization server facade", () => {
     expect(responses.every((response) => response.status === 201)).toBe(true);
     const stored = JSON.parse(context.clientStoreText()) as { clients: Array<{ client_id: string }> };
     expect(stored.clients).toHaveLength(8);
+  });
+
+  it("normalizes omitted public client registration metadata", async () => {
+    const context = await createTestApp();
+    const response = await registerClient(context.app, {
+      grant_types: undefined,
+      response_types: undefined,
+      token_endpoint_auth_method: undefined,
+    });
+    const client = await response.json() as {
+      grant_types: string[];
+      response_types: string[];
+      token_endpoint_auth_method: string;
+    };
+
+    expect(response.status).toBe(201);
+    expect(client.grant_types).toEqual(["authorization_code"]);
+    expect(client.response_types).toEqual(["code"]);
+    expect(client.token_endpoint_auth_method).toBe("none");
+  });
+
+  it("normalizes ChatGPT public client registration grant metadata", async () => {
+    const context = await createTestApp();
+    const response = await registerClient(context.app, {
+      grant_types: ["authorization_code", "refresh_token"],
+    });
+    const client = await response.json() as { grant_types: string[] };
+
+    expect(response.status).toBe(201);
+    expect(client.grant_types).toEqual(["authorization_code"]);
+  });
+
+  it("lists, shows, and revokes clients with the management command", async () => {
+    const context = await createTestApp();
+    const client = await registerAndReadClient(context.app);
+
+    const listOutput = await runClientsCommand(context.config, ["list"]);
+    expect(JSON.parse(listOutput)).toEqual([
+      expect.objectContaining({ client_id: client.client_id }),
+    ]);
+
+    const showOutput = await runClientsCommand(context.config, ["show", client.client_id]);
+    expect(JSON.parse(showOutput)).toEqual(expect.objectContaining({ client_id: client.client_id }));
+
+    const revokeOutput = await runClientsCommand(context.config, ["revoke", client.client_id]);
+    const revoked = JSON.parse(revokeOutput) as { revoked_at?: string };
+    expect(revoked.revoked_at).toBeTruthy();
   });
 
   it("rejects invalid dynamic client registration metadata", async () => {
@@ -225,6 +300,26 @@ describe("oauth authorization server facade", () => {
     expect(badScope.headers.get("location")).toContain("error=invalid_scope");
   });
 
+  it("rejects revoked clients during authorization and token exchange", async () => {
+    const context = await createTestApp();
+    const client = await registerAndReadClient(context.app);
+    const code = await authorizeAndGetCode(context.app, client.client_id, validVerifier);
+    const store = new JsonClientStore(context.clientStoreFile);
+    await store.revoke(client.client_id);
+
+    const authorization = await authorize(context.app, {
+      client_id: client.client_id,
+      redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+      code_challenge: pkceChallenge(validVerifier),
+      resource: "https://levitate.example.com/brain/mcp",
+    });
+    expect(authorization.headers.get("location")).toContain("error=invalid_client");
+
+    const exchanged = await token(context.app, validTokenRequest(code, client.client_id, validVerifier));
+    expect(exchanged.status).toBe(400);
+    await expect(exchanged.json()).resolves.toEqual({ error: "invalid_client" });
+  });
+
   it("limits requested scopes to the registered client scope", async () => {
     const context = await createTestApp();
     const client = await registerAndReadClient(context.app, { scope: "brain:read" });
@@ -238,6 +333,22 @@ describe("oauth authorization server facade", () => {
     });
 
     expect(response.headers.get("location")).toContain("error=invalid_scope");
+  });
+
+  it("allows globally supported scopes when client registration omits scope", async () => {
+    const context = await createTestApp();
+    const client = await registerAndReadClient(context.app);
+
+    const response = await authorize(context.app, {
+      client_id: client.client_id,
+      redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+      code_challenge: pkceChallenge(validVerifier),
+      resource: "https://levitate.example.com/brain/mcp",
+      scope: "brain:read brain:write",
+    });
+
+    expect(response.status).toBe(302);
+    expect(new URL(response.headers.get("location") ?? "").searchParams.get("code")).toBeTruthy();
   });
 
   it("authorizes with pkce and preserves state", async () => {
@@ -256,6 +367,115 @@ describe("oauth authorization server facade", () => {
     expect(location.origin + location.pathname).toBe("https://chatgpt.com/connector/oauth/callback");
     expect(location.searchParams.get("code")).toBeTruthy();
     expect(location.searchParams.get("state")).toBe("state-1");
+  });
+
+  it("requires manual approval before issuing an authorization code", async () => {
+    const context = await createTestApp({ approval: "manual" });
+    const client = await registerAndReadClient(context.app);
+    const response = await authorize(context.app, {
+      client_id: client.client_id,
+      redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+      code_challenge: pkceChallenge(validVerifier),
+      resource: "https://levitate.example.com/brain/mcp",
+      scope: "brain:read",
+      state: "state-1",
+    });
+
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("Approve Levitate access");
+    expect(html).toContain("ChatGPT Connector");
+    expect(html).toContain("https://chatgpt.com");
+    expect(html).toContain("https://levitate.example.com/brain/mcp");
+    expect(html).toContain("brain:read");
+    expect(html).toContain("Approval secret");
+    expect(html).toContain("fa-solid fa-eye");
+    expect(html).toContain("fa-solid fa-eye-slash");
+    expect(html).toContain("Cancel");
+    expect(html).not.toContain("state-1");
+
+    const approved = await submitApproval(context.app, html, "approve");
+    expect(approved.status).toBe(302);
+    const location = new URL(approved.headers.get("location") ?? "");
+    expect(location.origin + location.pathname).toBe("https://chatgpt.com/connector/oauth/callback");
+    expect(location.searchParams.get("code")).toBeTruthy();
+    expect(location.searchParams.get("state")).toBe("state-1");
+  });
+
+  it("requires the owner approval secret before approving manually", async () => {
+    const context = await createTestApp({ approval: "manual" });
+    const client = await registerAndReadClient(context.app);
+    const response = await authorize(context.app, {
+      client_id: client.client_id,
+      redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+      code_challenge: pkceChallenge(validVerifier),
+      resource: "https://levitate.example.com/brain/mcp",
+      state: "state-1",
+    });
+    const html = await response.text();
+
+    const rejected = await submitApproval(context.app, html, "approve", "wrong-secret");
+    expect(rejected.status).toBe(403);
+    expect(await rejected.text()).toContain("Approval secret invalid");
+
+    const approved = await submitApproval(context.app, html, "approve");
+    expect(approved.status).toBe(302);
+    const location = new URL(approved.headers.get("location") ?? "");
+    expect(location.searchParams.get("code")).toBeTruthy();
+  });
+
+  it("returns access_denied when manual approval is denied", async () => {
+    const context = await createTestApp({ approval: "manual" });
+    const client = await registerAndReadClient(context.app);
+    const response = await authorize(context.app, {
+      client_id: client.client_id,
+      redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+      code_challenge: pkceChallenge(validVerifier),
+      resource: "https://levitate.example.com/brain/mcp",
+      state: "state-1",
+    });
+    const denied = await submitApproval(context.app, await response.text(), "deny", "");
+
+    expect(denied.status).toBe(302);
+    const location = new URL(denied.headers.get("location") ?? "");
+    expect(location.searchParams.get("error")).toBe("access_denied");
+    expect(location.searchParams.get("state")).toBe("state-1");
+  });
+
+  it("rejects manual approval when the client is revoked while pending", async () => {
+    const context = await createTestApp({ approval: "manual" });
+    const client = await registerAndReadClient(context.app);
+    const response = await authorize(context.app, {
+      client_id: client.client_id,
+      redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+      code_challenge: pkceChallenge(validVerifier),
+      resource: "https://levitate.example.com/brain/mcp",
+      state: "state-1",
+    });
+    const html = await response.text();
+    const store = new JsonClientStore(context.clientStoreFile);
+    await store.revoke(client.client_id);
+
+    const approved = await submitApproval(context.app, html, "approve");
+    expect(approved.status).toBe(302);
+    const location = new URL(approved.headers.get("location") ?? "");
+    expect(location.searchParams.get("error")).toBe("invalid_client");
+    expect(location.searchParams.get("code")).toBeNull();
+    expect(location.searchParams.get("state")).toBe("state-1");
+  });
+
+  it("does not render manual approval for unsafe redirect requests", async () => {
+    const context = await createTestApp({ approval: "manual" });
+    const client = await registerAndReadClient(context.app);
+    const response = await authorize(context.app, {
+      client_id: client.client_id,
+      redirect_uri: "https://chatgpt.com/connector/oauth/other",
+      code_challenge: pkceChallenge(validVerifier),
+      resource: "https://levitate.example.com/brain/mcp",
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "invalid_request" });
   });
 
   it("exchanges an authorization code for an RS256 access token", async () => {
@@ -411,7 +631,9 @@ async function createTestApp(options: TestOptions = {}) {
 
 interface TestOptions {
   allowedRedirectUriPrefixes?: string[];
+  approval?: "auto" | "manual";
   codeTtlSeconds?: number;
+  dcrEnabled?: boolean;
 }
 
 function createTestConfig(options: TestOptions = {}) {
@@ -449,7 +671,11 @@ function createTestConfig(options: TestOptions = {}) {
         enabled: true,
         issuer: "https://levitate.example.com",
         subject: "local-user",
-        approval: "auto",
+        approval: options.approval ?? "auto",
+        approval_secret_env: options.approval === "manual" ? "LEVITATE_APPROVAL_SECRET" : undefined,
+        dcr: {
+          enabled: options.dcrEnabled ?? true,
+        },
         allowed_redirect_uri_prefixes: options.allowedRedirectUriPrefixes ?? ["https://chatgpt.com/connector/oauth/"],
         scopes_supported: ["brain:read", "brain:write"],
         default_scopes: ["brain:read"],
@@ -468,6 +694,10 @@ function createTestConfig(options: TestOptions = {}) {
     },
   };
 
+  if (options.approval === "manual") {
+    process.env.LEVITATE_APPROVAL_SECRET = "test-secret";
+  }
+
   return {
     config,
     dir,
@@ -476,7 +706,15 @@ function createTestConfig(options: TestOptions = {}) {
   };
 }
 
-function registerClient(app: Awaited<ReturnType<typeof createTestApp>>["app"], overrides: { scope?: string } = {}) {
+function registerClient(
+  app: Awaited<ReturnType<typeof createTestApp>>["app"],
+  overrides: {
+    grant_types?: string[];
+    response_types?: string[];
+    scope?: string;
+    token_endpoint_auth_method?: string;
+  } = {},
+) {
   return app.fetch(new Request("http://localhost/oauth/register", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -546,6 +784,32 @@ function token(app: Awaited<ReturnType<typeof createTestApp>>["app"], params: Re
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(params),
+  }));
+}
+
+async function runClientsCommand(config: LevitateConfig, args: string[]): Promise<string> {
+  let output = "";
+  await runOAuthClientsCommand(config, args, {
+    write(chunk: string | Uint8Array) {
+      output += chunk.toString();
+      return true;
+    },
+  });
+  return output;
+}
+
+function submitApproval(
+  app: Awaited<ReturnType<typeof createTestApp>>["app"],
+  html: string,
+  decision: "approve" | "deny",
+  approvalSecret = "test-secret",
+) {
+  const path = html.match(/action="([^"]+)"/)?.[1];
+  if (!path) throw new Error("approval action missing");
+  return app.fetch(new Request(`http://localhost${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ decision, approval_secret: approvalSecret }),
   }));
 }
 

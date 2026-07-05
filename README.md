@@ -240,6 +240,7 @@ enabled = true
 issuer = "https://levitate.example.com"
 subject = "local-user"
 approval = "auto"
+approval_secret_env = "LEVITATE_APPROVAL_SECRET"
 allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
 scopes_supported = ["brain:read", "brain:write"]
 default_scopes = ["brain:read"]
@@ -250,6 +251,9 @@ client_store_file = "state/oauth-clients.json"
 [oauth.as.keys]
 private_key_file = "state/oauth-private-key.pem"
 key_id = "levitate-local-1"
+
+[oauth.as.dcr]
+enabled = true
 
 [auth]
 mode = "levitate"
@@ -286,6 +290,34 @@ Registered redirect URIs must be absolute HTTPS URLs and match `oauth.as.allowed
 Levitate does not issue client secrets.
 Authorization codes are short-lived, single-use, and stored in memory only.
 Registered clients persist in the JSON file configured by `oauth.as.client_store_file`.
+
+DCR is closed by default.
+Temporarily set `[oauth.as.dcr] enabled = true` while installing a ChatGPT Custom App, then set it back to `false` after the client appears in `oauth.as.client_store_file`.
+Existing registered clients can still authorize and exchange tokens while DCR is disabled.
+
+`approval = "auto"` immediately issues authorization codes after validation and is intended for private tests or temporary setup.
+Set `approval = "manual"` to require an explicit owner approval page before Levitate issues an authorization code.
+Manual approval requires `oauth.as.approval_secret_env`, and the referenced environment variable must contain the approval secret.
+Manual approval displays the client, redirect origin, requested resource, scopes, and registration type after client, redirect URI, resource, scope, and PKCE validation pass, then requires the approval secret before approving.
+Canceling an approval request does not require the approval secret because it only returns `access_denied`.
+Approval and denial responses do not expose tokens, authorization codes, local filesystem paths, or stack traces.
+
+Example:
+
+```sh
+export LEVITATE_APPROVAL_SECRET="$(openssl rand -base64 32)"
+```
+
+Manage registered clients from the same config:
+
+```sh
+levitate oauth clients list --config config/example.local.toml
+levitate oauth clients show <client_id> --config config/example.local.toml
+levitate oauth clients revoke <client_id> --config config/example.local.toml
+```
+
+Revoked clients cannot start new authorization flows or exchange already-issued authorization codes.
+Already-issued access tokens remain valid until expiration.
 
 Access tokens are RS256 JWTs with `iss`, `sub`, `aud`, `scope`, `exp`, `iat`, and `client_id`.
 `auth.mode = "levitate"` validates only Levitate-issued JWTs against the configured issuer, resource audience, public key, expiration, algorithm, and client ID claim.
@@ -536,7 +568,7 @@ Compatibility should be validated against each target remote MCP host because Cl
 - No Chrome extension
 - No WebRTC mode
 - No OAuth login UI
-- No approval UI
+- No hosted multi-user approval UI
 - No multi-user management
 - No multi-profile routing
 - No persistent audit database
