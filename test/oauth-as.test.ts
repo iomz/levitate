@@ -8,8 +8,10 @@ import { createAuthenticator } from "../src/auth/index.js";
 import type { LevitateConfig } from "../src/config.js";
 import type { Logger } from "../src/logging.js";
 import type { StdioMcpBackend } from "../src/mcp/backend.js";
+import { runOAuthClientsCommand } from "../src/oauth/as/clients-cli.js";
 import { loadAuthorizationServerKeys } from "../src/oauth/as/keys.js";
 import { createOAuthAuthorizationServer } from "../src/oauth/as/routes.js";
+import { JsonClientStore } from "../src/oauth/as/store.js";
 import { createApp } from "../src/server.js";
 
 const logger: Logger = {
@@ -119,6 +121,23 @@ describe("oauth authorization server facade", () => {
     expect(responses.every((response) => response.status === 201)).toBe(true);
     const stored = JSON.parse(context.clientStoreText()) as { clients: Array<{ client_id: string }> };
     expect(stored.clients).toHaveLength(8);
+  });
+
+  it("lists, shows, and revokes clients with the management command", async () => {
+    const context = await createTestApp();
+    const client = await registerAndReadClient(context.app);
+
+    const listOutput = await runClientsCommand(context.config, ["list"]);
+    expect(JSON.parse(listOutput)).toEqual([
+      expect.objectContaining({ client_id: client.client_id }),
+    ]);
+
+    const showOutput = await runClientsCommand(context.config, ["show", client.client_id]);
+    expect(JSON.parse(showOutput)).toEqual(expect.objectContaining({ client_id: client.client_id }));
+
+    const revokeOutput = await runClientsCommand(context.config, ["revoke", client.client_id]);
+    const revoked = JSON.parse(revokeOutput) as { revoked_at?: string };
+    expect(revoked.revoked_at).toBeTruthy();
   });
 
   it("rejects invalid dynamic client registration metadata", async () => {
@@ -249,6 +268,26 @@ describe("oauth authorization server facade", () => {
       scope: "brain:admin",
     });
     expect(badScope.headers.get("location")).toContain("error=invalid_scope");
+  });
+
+  it("rejects revoked clients during authorization and token exchange", async () => {
+    const context = await createTestApp();
+    const client = await registerAndReadClient(context.app);
+    const code = await authorizeAndGetCode(context.app, client.client_id, validVerifier);
+    const store = new JsonClientStore(context.clientStoreFile);
+    await store.revoke(client.client_id);
+
+    const authorization = await authorize(context.app, {
+      client_id: client.client_id,
+      redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+      code_challenge: pkceChallenge(validVerifier),
+      resource: "https://levitate.example.com/brain/mcp",
+    });
+    expect(authorization.headers.get("location")).toContain("error=invalid_client");
+
+    const exchanged = await token(context.app, validTokenRequest(code, client.client_id, validVerifier));
+    expect(exchanged.status).toBe(400);
+    await expect(exchanged.json()).resolves.toEqual({ error: "invalid_client" });
   });
 
   it("limits requested scopes to the registered client scope", async () => {
@@ -639,6 +678,17 @@ function token(app: Awaited<ReturnType<typeof createTestApp>>["app"], params: Re
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(params),
   }));
+}
+
+async function runClientsCommand(config: LevitateConfig, args: string[]): Promise<string> {
+  let output = "";
+  await runOAuthClientsCommand(config, args, {
+    write(chunk: string | Uint8Array) {
+      output += chunk.toString();
+      return true;
+    },
+  });
+  return output;
 }
 
 function submitApproval(

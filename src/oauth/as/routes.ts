@@ -130,7 +130,7 @@ export function createOAuthAuthorizationServer(
         };
 
         if (url.searchParams.get("response_type") !== "code") return redirectError("unsupported_response_type");
-        if (!client) return redirectError("invalid_client");
+        if (!client || client.revoked_at) return redirectError("invalid_client");
         if (!redirectUri || !isExactRegisteredRedirectUri(client, redirectUri)) {
           return c.json({ error: "invalid_request" }, 400);
         }
@@ -201,7 +201,7 @@ export function createOAuthAuthorizationServer(
         }
 
         const client = await clients.get(clientId);
-        if (!client) return c.json({ error: "invalid_client" }, 400);
+        if (!client || client.revoked_at) return c.json({ error: "invalid_client" }, 400);
 
         let record;
         try {

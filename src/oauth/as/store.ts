@@ -11,6 +11,7 @@ export interface RegisteredClient {
   token_endpoint_auth_method: "none";
   scope?: string;
   created_at: string;
+  revoked_at?: string;
 }
 
 interface ClientStoreFile {
@@ -42,6 +43,22 @@ export class JsonClientStore {
   async get(clientId: string): Promise<RegisteredClient | undefined> {
     const data = await this.read();
     return data.clients.find((client) => client.client_id === clientId);
+  }
+
+  async list(): Promise<RegisteredClient[]> {
+    const data = await this.read();
+    return data.clients;
+  }
+
+  async revoke(clientId: string): Promise<RegisteredClient | undefined> {
+    return this.withWriteLock(async () => {
+      const data = await this.read();
+      const client = data.clients.find((entry) => entry.client_id === clientId);
+      if (!client) return undefined;
+      client.revoked_at ??= new Date().toISOString();
+      await this.write(data);
+      return client;
+    });
   }
 
   private async read(): Promise<ClientStoreFile> {
