@@ -294,6 +294,11 @@ DCR is closed by default.
 Temporarily set `[oauth.as.dcr] enabled = true` while installing a ChatGPT Custom App, then set it back to `false` after the client appears in `oauth.as.client_store_file`.
 Existing registered clients can still authorize and exchange tokens while DCR is disabled.
 
+`approval = "auto"` immediately issues authorization codes after validation and is intended for private tests or temporary setup.
+Set `approval = "manual"` to require an explicit owner approval page before Levitate issues an authorization code.
+Manual approval displays the client, redirect origin, requested resource, scopes, and registration type after client, redirect URI, resource, scope, and PKCE validation pass.
+Approval and denial responses do not expose tokens, authorization codes, local filesystem paths, or stack traces.
+
 Access tokens are RS256 JWTs with `iss`, `sub`, `aud`, `scope`, `exp`, `iat`, and `client_id`.
 `auth.mode = "levitate"` validates only Levitate-issued JWTs against the configured issuer, resource audience, public key, expiration, algorithm, and client ID claim.
 Existing `auth.mode = "oidc"` remains available separately for Auth0 and other external RS256 JWKS-backed issuers.
@@ -543,7 +548,7 @@ Compatibility should be validated against each target remote MCP host because Cl
 - No Chrome extension
 - No WebRTC mode
 - No OAuth login UI
-- No approval UI
+- No hosted multi-user approval UI
 - No multi-user management
 - No multi-profile routing
 - No persistent audit database

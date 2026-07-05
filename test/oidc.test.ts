@@ -57,6 +57,7 @@ const config: LevitateConfig = {
     },
     as: {
       enabled: false,
+      approval: "auto",
       dcr: {
         enabled: false,
       },

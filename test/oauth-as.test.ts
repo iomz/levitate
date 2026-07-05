@@ -284,6 +284,67 @@ describe("oauth authorization server facade", () => {
     expect(location.searchParams.get("state")).toBe("state-1");
   });
 
+  it("requires manual approval before issuing an authorization code", async () => {
+    const context = await createTestApp({ approval: "manual" });
+    const client = await registerAndReadClient(context.app);
+    const response = await authorize(context.app, {
+      client_id: client.client_id,
+      redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+      code_challenge: pkceChallenge(validVerifier),
+      resource: "https://levitate.example.com/brain/mcp",
+      scope: "brain:read",
+      state: "state-1",
+    });
+
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("Approve Levitate access");
+    expect(html).toContain("ChatGPT Connector");
+    expect(html).toContain("https://chatgpt.com");
+    expect(html).toContain("https://levitate.example.com/brain/mcp");
+    expect(html).toContain("brain:read");
+    expect(html).not.toContain("state-1");
+
+    const approved = await submitApproval(context.app, html, "approve");
+    expect(approved.status).toBe(302);
+    const location = new URL(approved.headers.get("location") ?? "");
+    expect(location.origin + location.pathname).toBe("https://chatgpt.com/connector/oauth/callback");
+    expect(location.searchParams.get("code")).toBeTruthy();
+    expect(location.searchParams.get("state")).toBe("state-1");
+  });
+
+  it("returns access_denied when manual approval is denied", async () => {
+    const context = await createTestApp({ approval: "manual" });
+    const client = await registerAndReadClient(context.app);
+    const response = await authorize(context.app, {
+      client_id: client.client_id,
+      redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+      code_challenge: pkceChallenge(validVerifier),
+      resource: "https://levitate.example.com/brain/mcp",
+      state: "state-1",
+    });
+    const denied = await submitApproval(context.app, await response.text(), "deny");
+
+    expect(denied.status).toBe(302);
+    const location = new URL(denied.headers.get("location") ?? "");
+    expect(location.searchParams.get("error")).toBe("access_denied");
+    expect(location.searchParams.get("state")).toBe("state-1");
+  });
+
+  it("does not render manual approval for unsafe redirect requests", async () => {
+    const context = await createTestApp({ approval: "manual" });
+    const client = await registerAndReadClient(context.app);
+    const response = await authorize(context.app, {
+      client_id: client.client_id,
+      redirect_uri: "https://chatgpt.com/connector/oauth/other",
+      code_challenge: pkceChallenge(validVerifier),
+      resource: "https://levitate.example.com/brain/mcp",
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "invalid_request" });
+  });
+
   it("exchanges an authorization code for an RS256 access token", async () => {
     const context = await createTestApp();
     const client = await registerAndReadClient(context.app);
@@ -437,6 +498,7 @@ async function createTestApp(options: TestOptions = {}) {
 
 interface TestOptions {
   allowedRedirectUriPrefixes?: string[];
+  approval?: "auto" | "manual";
   codeTtlSeconds?: number;
   dcrEnabled?: boolean;
 }
@@ -476,7 +538,7 @@ function createTestConfig(options: TestOptions = {}) {
         enabled: true,
         issuer: "https://levitate.example.com",
         subject: "local-user",
-        approval: "auto",
+        approval: options.approval ?? "auto",
         dcr: {
           enabled: options.dcrEnabled ?? true,
         },
@@ -576,6 +638,20 @@ function token(app: Awaited<ReturnType<typeof createTestApp>>["app"], params: Re
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(params),
+  }));
+}
+
+function submitApproval(
+  app: Awaited<ReturnType<typeof createTestApp>>["app"],
+  html: string,
+  decision: "approve" | "deny",
+) {
+  const path = html.match(/action="([^"]+)"/)?.[1];
+  if (!path) throw new Error("approval action missing");
+  return app.fetch(new Request(`http://localhost${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ decision }),
   }));
 }
 

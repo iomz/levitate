@@ -49,7 +49,7 @@ const OAuthAuthorizationServerSchema = z.object({
   enabled: z.boolean().default(false),
   issuer: HttpsUrlSchema.optional(),
   subject: z.string().min(1).optional(),
-  approval: z.literal("auto").optional(),
+  approval: z.enum(["auto", "manual"]).default("auto"),
   dcr: z.object({
     enabled: z.boolean().default(false),
   }).default({ enabled: false }),
@@ -79,14 +79,6 @@ const OAuthAuthorizationServerSchema = z.object({
       code: z.ZodIssueCode.custom,
       message: "oauth.as.subject is required when oauth.as.enabled is true",
       path: ["subject"],
-    });
-  }
-
-  if (value.approval !== "auto") {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "oauth.as.approval must be auto when oauth.as.enabled is true",
-      path: ["approval"],
     });
   }
 

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { AuthorizationCodeStore, verifyPkceS256 } from "./codes.js";
 import type { AuthorizationServerKeys } from "./keys.js";
@@ -19,6 +20,18 @@ interface RegisterRequest {
   scope?: unknown;
 }
 
+interface PendingAuthorization {
+  id: string;
+  clientId: string;
+  clientName?: string;
+  redirectUri: string;
+  resource: string;
+  scopes: string[];
+  codeChallenge: string;
+  state?: string;
+  expiresAt: number;
+}
+
 export function createOAuthAuthorizationServer(
   config: LevitateConfig,
   keys: AuthorizationServerKeys,
@@ -32,6 +45,7 @@ export function createOAuthAuthorizationServer(
 
   const clients = new JsonClientStore(asConfig.client_store_file);
   const codes = new AuthorizationCodeStore();
+  const pendingAuthorizations = new PendingAuthorizationStore();
 
   return {
     registerRoutes(app: Hono): void {
@@ -131,21 +145,45 @@ export function createOAuthAuthorizationServer(
         const scopes = parseRequestedScopes(url.searchParams.get("scope"), config, client);
         if (!scopes) return redirectError("invalid_scope");
 
-        const code = codes.create({
+        const pending: PendingAuthorization = {
+          id: randomUUID(),
           clientId: client.client_id,
+          clientName: client.client_name,
           redirectUri,
           resource,
           scopes,
           codeChallenge,
-          codeChallengeMethod: "S256",
-          subject: asConfig.subject!,
+          state,
           expiresAt: Date.now() + (asConfig.authorization_code_ttl_seconds * 1000),
-        });
+        };
 
-        const location = new URL(redirectUri);
-        location.searchParams.set("code", code);
-        if (state) location.searchParams.set("state", state);
-        return c.redirect(location.toString(), 302);
+        if (asConfig.approval === "manual") {
+          pendingAuthorizations.create(pending);
+          return c.html(renderApprovalPage(pending));
+        }
+
+        return c.redirect(issueAuthorizationRedirect(pending, codes, config).toString(), 302);
+      });
+
+      app.get("/oauth/approval/:id", (c) => {
+        const pending = pendingAuthorizations.get(c.req.param("id"));
+        if (!pending) return c.html(renderApprovalExpiredPage(), 404);
+        return c.html(renderApprovalPage(pending));
+      });
+
+      app.post("/oauth/approval/:id", async (c) => {
+        const pending = pendingAuthorizations.consume(c.req.param("id"));
+        if (!pending) return c.html(renderApprovalExpiredPage(), 404);
+
+        const form = await c.req.parseBody();
+        if (stringFormValue(form.decision) !== "approve") {
+          const location = new URL(pending.redirectUri);
+          location.searchParams.set("error", "access_denied");
+          if (pending.state) location.searchParams.set("state", pending.state);
+          return c.redirect(location.toString(), 302);
+        }
+
+        return c.redirect(issueAuthorizationRedirect(pending, codes, config).toString(), 302);
       });
 
       app.post("/oauth/token", async (c) => {
@@ -200,6 +238,117 @@ export function createOAuthAuthorizationServer(
       });
     },
   };
+}
+
+class PendingAuthorizationStore {
+  private readonly entries = new Map<string, PendingAuthorization>();
+
+  create(entry: PendingAuthorization): void {
+    this.prune();
+    this.entries.set(entry.id, entry);
+  }
+
+  get(id: string): PendingAuthorization | undefined {
+    this.prune();
+    const entry = this.entries.get(id);
+    if (!entry || entry.expiresAt <= Date.now()) return undefined;
+    return entry;
+  }
+
+  consume(id: string): PendingAuthorization | undefined {
+    const entry = this.get(id);
+    if (entry) this.entries.delete(id);
+    return entry;
+  }
+
+  private prune(): void {
+    const now = Date.now();
+    for (const [id, entry] of this.entries) {
+      if (entry.expiresAt <= now) this.entries.delete(id);
+    }
+  }
+}
+
+function issueAuthorizationRedirect(
+  pending: PendingAuthorization,
+  codes: AuthorizationCodeStore,
+  config: LevitateConfig,
+): URL {
+  const code = codes.create({
+    clientId: pending.clientId,
+    redirectUri: pending.redirectUri,
+    resource: pending.resource,
+    scopes: pending.scopes,
+    codeChallenge: pending.codeChallenge,
+    codeChallengeMethod: "S256",
+    subject: config.oauth.as.subject!,
+    expiresAt: Date.now() + (config.oauth.as.authorization_code_ttl_seconds * 1000),
+  });
+
+  const location = new URL(pending.redirectUri);
+  location.searchParams.set("code", code);
+  if (pending.state) location.searchParams.set("state", pending.state);
+  return location;
+}
+
+function renderApprovalPage(pending: PendingAuthorization): string {
+  const redirect = new URL(pending.redirectUri);
+  const scopes = pending.scopes.map((scope) => `<li>${escapeHtml(scope)}</li>`).join("");
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Approve Levitate access</title>
+</head>
+<body>
+  <main>
+    <h1>Approve Levitate access</h1>
+    <dl>
+      <dt>Client</dt>
+      <dd>${escapeHtml(pending.clientName ?? pending.clientId)}</dd>
+      <dt>Redirect origin</dt>
+      <dd>${escapeHtml(redirect.origin)}</dd>
+      <dt>Resource</dt>
+      <dd>${escapeHtml(pending.resource)}</dd>
+      <dt>Scopes</dt>
+      <dd><ul>${scopes}</ul></dd>
+      <dt>Client registration</dt>
+      <dd>dynamic</dd>
+    </dl>
+    <form method="post" action="/oauth/approval/${escapeHtml(pending.id)}">
+      <button type="submit" name="decision" value="approve">Approve</button>
+      <button type="submit" name="decision" value="deny">Deny</button>
+    </form>
+  </main>
+</body>
+</html>`;
+}
+
+function renderApprovalExpiredPage(): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Authorization request expired</title>
+</head>
+<body>
+  <main>
+    <h1>Authorization request expired</h1>
+    <p>Start the connection flow again.</p>
+  </main>
+</body>
+</html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function validateRegistration(body: RegisterRequest, config: LevitateConfig): string | undefined {
