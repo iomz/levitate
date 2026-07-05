@@ -240,6 +240,7 @@ enabled = true
 issuer = "https://levitate.example.com"
 subject = "local-user"
 approval = "auto"
+approval_secret_env = "LEVITATE_APPROVAL_SECRET"
 allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
 scopes_supported = ["brain:read", "brain:write"]
 default_scopes = ["brain:read"]
@@ -296,8 +297,16 @@ Existing registered clients can still authorize and exchange tokens while DCR is
 
 `approval = "auto"` immediately issues authorization codes after validation and is intended for private tests or temporary setup.
 Set `approval = "manual"` to require an explicit owner approval page before Levitate issues an authorization code.
-Manual approval displays the client, redirect origin, requested resource, scopes, and registration type after client, redirect URI, resource, scope, and PKCE validation pass.
+Manual approval requires `oauth.as.approval_secret_env`, and the referenced environment variable must contain the approval secret.
+Manual approval displays the client, redirect origin, requested resource, scopes, and registration type after client, redirect URI, resource, scope, and PKCE validation pass, then requires the approval secret before approving.
+Canceling an approval request does not require the approval secret because it only returns `access_denied`.
 Approval and denial responses do not expose tokens, authorization codes, local filesystem paths, or stack traces.
+
+Example:
+
+```sh
+export LEVITATE_APPROVAL_SECRET="$(openssl rand -base64 32)"
+```
 
 Manage registered clients from the same config:
 

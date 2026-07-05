@@ -50,6 +50,7 @@ const OAuthAuthorizationServerSchema = z.object({
   issuer: HttpsUrlSchema.optional(),
   subject: z.string().min(1).optional(),
   approval: z.enum(["auto", "manual"]).default("auto"),
+  approval_secret_env: z.string().min(1).optional(),
   dcr: z.object({
     enabled: z.boolean().default(false),
   }).default({ enabled: false }),
@@ -79,6 +80,14 @@ const OAuthAuthorizationServerSchema = z.object({
       code: z.ZodIssueCode.custom,
       message: "oauth.as.subject is required when oauth.as.enabled is true",
       path: ["subject"],
+    });
+  }
+
+  if (value.approval === "manual" && !value.approval_secret_env) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "oauth.as.approval_secret_env is required when oauth.as.approval is manual",
+      path: ["approval_secret_env"],
     });
   }
 

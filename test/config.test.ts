@@ -292,6 +292,7 @@ enabled = true
 issuer = "https://levitate.example.com"
 subject = "local-user"
 approval = "manual"
+approval_secret_env = "LEVITATE_APPROVAL_SECRET"
 allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
 scopes_supported = ["brain:read"]
 default_scopes = ["brain:read"]
@@ -303,6 +304,39 @@ key_id = "levitate-local-1"
 `);
 
     expect(config.oauth.as.approval).toBe("manual");
+  });
+
+  it("rejects manual oauth authorization approval mode without approval secret env", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "levitate"
+
+[oauth.resource]
+enabled = true
+resource = "https://levitate.example.com/brain/mcp"
+authorization_servers = ["https://levitate.example.com"]
+scopes_supported = ["brain:read"]
+
+[oauth.as]
+enabled = true
+issuer = "https://levitate.example.com"
+subject = "local-user"
+approval = "manual"
+allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
+scopes_supported = ["brain:read"]
+default_scopes = ["brain:read"]
+client_store_file = "state/oauth-clients.json"
+
+[oauth.as.keys]
+private_key_file = "state/oauth-private-key.pem"
+key_id = "levitate-local-1"
+`)).toThrow("oauth.as.approval_secret_env is required when oauth.as.approval is manual");
   });
 
   it("rejects oauth resource metadata without authorization server issuer", () => {

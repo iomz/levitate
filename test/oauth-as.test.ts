@@ -123,6 +123,36 @@ describe("oauth authorization server facade", () => {
     expect(stored.clients).toHaveLength(8);
   });
 
+  it("normalizes omitted public client registration metadata", async () => {
+    const context = await createTestApp();
+    const response = await registerClient(context.app, {
+      grant_types: undefined,
+      response_types: undefined,
+      token_endpoint_auth_method: undefined,
+    });
+    const client = await response.json() as {
+      grant_types: string[];
+      response_types: string[];
+      token_endpoint_auth_method: string;
+    };
+
+    expect(response.status).toBe(201);
+    expect(client.grant_types).toEqual(["authorization_code"]);
+    expect(client.response_types).toEqual(["code"]);
+    expect(client.token_endpoint_auth_method).toBe("none");
+  });
+
+  it("normalizes ChatGPT public client registration grant metadata", async () => {
+    const context = await createTestApp();
+    const response = await registerClient(context.app, {
+      grant_types: ["authorization_code", "refresh_token"],
+    });
+    const client = await response.json() as { grant_types: string[] };
+
+    expect(response.status).toBe(201);
+    expect(client.grant_types).toEqual(["authorization_code"]);
+  });
+
   it("lists, shows, and revokes clients with the management command", async () => {
     const context = await createTestApp();
     const client = await registerAndReadClient(context.app);
@@ -305,6 +335,22 @@ describe("oauth authorization server facade", () => {
     expect(response.headers.get("location")).toContain("error=invalid_scope");
   });
 
+  it("allows globally supported scopes when client registration omits scope", async () => {
+    const context = await createTestApp();
+    const client = await registerAndReadClient(context.app);
+
+    const response = await authorize(context.app, {
+      client_id: client.client_id,
+      redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+      code_challenge: pkceChallenge(validVerifier),
+      resource: "https://levitate.example.com/brain/mcp",
+      scope: "brain:read brain:write",
+    });
+
+    expect(response.status).toBe(302);
+    expect(new URL(response.headers.get("location") ?? "").searchParams.get("code")).toBeTruthy();
+  });
+
   it("authorizes with pkce and preserves state", async () => {
     const context = await createTestApp();
     const client = await registerAndReadClient(context.app);
@@ -342,6 +388,10 @@ describe("oauth authorization server facade", () => {
     expect(html).toContain("https://chatgpt.com");
     expect(html).toContain("https://levitate.example.com/brain/mcp");
     expect(html).toContain("brain:read");
+    expect(html).toContain("Approval secret");
+    expect(html).toContain("fa-solid fa-eye");
+    expect(html).toContain("fa-solid fa-eye-slash");
+    expect(html).toContain("Cancel");
     expect(html).not.toContain("state-1");
 
     const approved = await submitApproval(context.app, html, "approve");
@@ -350,6 +400,28 @@ describe("oauth authorization server facade", () => {
     expect(location.origin + location.pathname).toBe("https://chatgpt.com/connector/oauth/callback");
     expect(location.searchParams.get("code")).toBeTruthy();
     expect(location.searchParams.get("state")).toBe("state-1");
+  });
+
+  it("requires the owner approval secret before approving manually", async () => {
+    const context = await createTestApp({ approval: "manual" });
+    const client = await registerAndReadClient(context.app);
+    const response = await authorize(context.app, {
+      client_id: client.client_id,
+      redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+      code_challenge: pkceChallenge(validVerifier),
+      resource: "https://levitate.example.com/brain/mcp",
+      state: "state-1",
+    });
+    const html = await response.text();
+
+    const rejected = await submitApproval(context.app, html, "approve", "wrong-secret");
+    expect(rejected.status).toBe(403);
+    expect(await rejected.text()).toContain("Approval secret invalid");
+
+    const approved = await submitApproval(context.app, html, "approve");
+    expect(approved.status).toBe(302);
+    const location = new URL(approved.headers.get("location") ?? "");
+    expect(location.searchParams.get("code")).toBeTruthy();
   });
 
   it("returns access_denied when manual approval is denied", async () => {
@@ -362,7 +434,7 @@ describe("oauth authorization server facade", () => {
       resource: "https://levitate.example.com/brain/mcp",
       state: "state-1",
     });
-    const denied = await submitApproval(context.app, await response.text(), "deny");
+    const denied = await submitApproval(context.app, await response.text(), "deny", "");
 
     expect(denied.status).toBe(302);
     const location = new URL(denied.headers.get("location") ?? "");
@@ -600,6 +672,7 @@ function createTestConfig(options: TestOptions = {}) {
         issuer: "https://levitate.example.com",
         subject: "local-user",
         approval: options.approval ?? "auto",
+        approval_secret_env: options.approval === "manual" ? "LEVITATE_APPROVAL_SECRET" : undefined,
         dcr: {
           enabled: options.dcrEnabled ?? true,
         },
@@ -621,6 +694,10 @@ function createTestConfig(options: TestOptions = {}) {
     },
   };
 
+  if (options.approval === "manual") {
+    process.env.LEVITATE_APPROVAL_SECRET = "test-secret";
+  }
+
   return {
     config,
     dir,
@@ -629,7 +706,15 @@ function createTestConfig(options: TestOptions = {}) {
   };
 }
 
-function registerClient(app: Awaited<ReturnType<typeof createTestApp>>["app"], overrides: { scope?: string } = {}) {
+function registerClient(
+  app: Awaited<ReturnType<typeof createTestApp>>["app"],
+  overrides: {
+    grant_types?: string[];
+    response_types?: string[];
+    scope?: string;
+    token_endpoint_auth_method?: string;
+  } = {},
+) {
   return app.fetch(new Request("http://localhost/oauth/register", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -717,13 +802,14 @@ function submitApproval(
   app: Awaited<ReturnType<typeof createTestApp>>["app"],
   html: string,
   decision: "approve" | "deny",
+  approvalSecret = "test-secret",
 ) {
   const path = html.match(/action="([^"]+)"/)?.[1];
   if (!path) throw new Error("approval action missing");
   return app.fetch(new Request(`http://localhost${path}`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ decision }),
+    body: new URLSearchParams({ decision, approval_secret: approvalSecret }),
   }));
 }
 
