@@ -2,6 +2,31 @@ import { describe, expect, it } from "vitest";
 import { getBackendConfigs, parseConfigText } from "../src/config.js";
 
 describe("config parsing", () => {
+  it("rejects empty named backends combined with legacy stdio", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "gateway"
+[stdio]
+command = "node"
+[backends]
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`)).toThrow("stdio and backends cannot be configured together");
+  });
+
+  it("rejects reserved legacy MCP paths", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "gateway"
+mcp_path = "/health"
+[stdio]
+command = "node"
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`)).toThrow("backend mcp_path is reserved: /health");
+  });
   it("normalizes named multi-backend configuration", () => {
     const config = parseConfigText(`
 [server]

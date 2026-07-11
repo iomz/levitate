@@ -153,11 +153,7 @@ function isSupportedGrantTypes(value: unknown): boolean {
   )
     return false;
   return (
-    value.includes("authorization_code") &&
-    value.every(
-      (entry) => entry === "authorization_code" || entry === "refresh_token",
-    )
+    value.length === 1 && value[0] === "authorization_code"
   );
 }
-
 

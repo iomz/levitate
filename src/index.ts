@@ -39,23 +39,23 @@ async function main(): Promise<void> {
   });
 
   const startedBackends: StdioMcpBackend[] = [];
+  let server: ReturnType<typeof startHttpServer>;
   try {
     for (const runtime of backends) {
       await runtime.backend.start();
       startedBackends.push(runtime.backend);
     }
+    server = startHttpServer({
+      config,
+      authenticator,
+      backends,
+      logger,
+      oauthAuthorizationServer,
+    });
   } catch (error) {
     await Promise.allSettled(startedBackends.map((backend) => backend.close()));
     throw error;
   }
-  const server = startHttpServer({
-    config,
-    authenticator,
-    backends,
-    logger,
-    oauthAuthorizationServer,
-  });
-
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
@@ -69,14 +69,21 @@ async function main(): Promise<void> {
       if ("closeAllConnections" in server) server.closeAllConnections();
     }, 1_000);
     forceCloseTimer.unref();
-    await Promise.all([
-      httpClosed,
-      ...backends.map(({ backend }) => backend.close()),
-    ]);
-    clearTimeout(forceCloseTimer);
-    oauthAuthorizationServer?.close();
-    logger.info("levitate stopped", { signal });
-    process.exit(0);
+    try {
+      await Promise.all([
+        httpClosed,
+        ...backends.map(({ backend }) => backend.close()),
+      ]);
+    } catch (error) {
+      logger.warn("shutdown error", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      clearTimeout(forceCloseTimer);
+      oauthAuthorizationServer?.close();
+      logger.info("levitate stopped", { signal });
+      process.exit(0);
+    }
   };
 
   process.on("SIGINT", () => void shutdown("SIGINT"));

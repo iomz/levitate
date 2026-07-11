@@ -238,7 +238,7 @@ const ConfigSchema = z.object({
   if (!value.stdio && !backendEntries.length) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "stdio or backends must configure at least one backend", path: ["backends"] });
   }
-  if (value.stdio && backendEntries.length) {
+  if (value.stdio && value.backends !== undefined) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "stdio and backends cannot be configured together", path: ["backends"] });
   }
   const paths = backendEntries.map(([, backend]) => backend.mcp_path);
@@ -248,6 +248,12 @@ const ConfigSchema = z.object({
   for (const path of paths) {
     if (["/health", "/ready"].includes(path) || path.startsWith("/oauth") || path.startsWith("/.well-known")) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: `backend mcp_path is reserved: ${path}`, path: ["backends"] });
+    }
+  }
+  if (value.stdio) {
+    const path = value.server.mcp_path;
+    if (["/health", "/ready"].includes(path) || path.startsWith("/oauth") || path.startsWith("/.well-known")) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: `backend mcp_path is reserved: ${path}`, path: ["server", "mcp_path"] });
     }
   }
   if (backendEntries.length > 1 && value.oauth.resource.enabled) {

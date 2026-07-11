@@ -17,12 +17,6 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
     const code = stringFormValue(form.code);
     const redirectUri = stringFormValue(form.redirect_uri);
     const clientId = stringFormValue(form.client_id);
-    const retryAfter = rateLimiter?.consume("token", clientId ?? "unknown");
-    if (retryAfter) {
-      c.header("Retry-After", String(retryAfter));
-      logger.warn("oauth audit", { ...oauthAudit(c, "token_exchange", "rate_limited"), clientId });
-      return c.json({ error: "temporarily_unavailable" }, 429);
-    }
     const codeVerifier = stringFormValue(form.code_verifier);
     const resource = stringFormValue(form.resource);
 
@@ -52,6 +46,12 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
         revoked: Boolean(client?.revoked_at),
       });
       return c.json({ error: "invalid_client" }, 400);
+    }
+    const retryAfter = rateLimiter?.consume("token", client.client_id);
+    if (retryAfter) {
+      c.header("Retry-After", String(retryAfter));
+      logger.warn("oauth audit", { ...oauthAudit(c, "token_exchange", "rate_limited"), clientId });
+      return c.json({ error: "temporarily_unavailable" }, 429);
     }
 
     let record;

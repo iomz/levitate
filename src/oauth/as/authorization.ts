@@ -14,12 +14,6 @@ export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, c
   app.get("/oauth/authorize", async (c) => {
     const url = new URL(c.req.url);
     const clientId = url.searchParams.get("client_id");
-    const retryAfter = rateLimiter?.consume("authorization", clientId ?? "unknown");
-    if (retryAfter) {
-      c.header("Retry-After", String(retryAfter));
-      logger.warn("oauth audit", { ...oauthAudit(c, "authorization", "rate_limited"), clientId });
-      return c.json({ error: "temporarily_unavailable" }, 429);
-    }
     const redirectUri = url.searchParams.get("redirect_uri");
     const state = url.searchParams.get("state") ?? undefined;
     const client = clientId ? await clients.get(clientId) : undefined;
@@ -53,6 +47,12 @@ export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, c
       return redirectError("unsupported_response_type");
     if (!client || client.revoked_at)
       return redirectError("invalid_client");
+    const retryAfter = rateLimiter?.consume("authorization", client.client_id);
+    if (retryAfter) {
+      c.header("Retry-After", String(retryAfter));
+      logger.warn("oauth audit", { ...oauthAudit(c, "authorization", "rate_limited"), clientId });
+      return c.json({ error: "temporarily_unavailable" }, 429);
+    }
     if (
       !redirectUri ||
       !isExactRegisteredRedirectUri(client, redirectUri)

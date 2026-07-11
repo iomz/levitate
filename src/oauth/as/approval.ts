@@ -84,7 +84,6 @@ export function renderApprovalPage(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Approve Levitate access</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
   <style>
     :root {
       color-scheme: light;
@@ -252,6 +251,7 @@ export function renderApprovalPage(
       color: #637083;
       outline: none;
     }
+    .secret-toggle svg { width: 20px; height: 20px; }
     @media (max-width: 560px) {
       header { padding: 22px; }
       section { padding: 22px; }
@@ -289,7 +289,10 @@ export function renderApprovalPage(
         <div class="secret-field">
           <input id="approval_secret" name="approval_secret" type="password" autocomplete="current-password">
           <button type="button" id="toggle_secret" class="secret-toggle" aria-label="Reveal approval secret" aria-pressed="false">
-            <i class="fa-solid fa-eye" aria-hidden="true"></i>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <g id="eye_open"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></g>
+              <g id="eye_closed" hidden><path d="m3 3 18 18"/><path d="M10.6 6.2A11.7 11.7 0 0 1 12 6c6.5 0 10 6 10 6a17 17 0 0 1-2.1 2.8M6.2 6.2C3.5 8 2 12 2 12s3.5 6 10 6a10 10 0 0 0 3.8-.7"/></g>
+            </svg>
           </button>
         </div>
         <div class="actions">
@@ -302,13 +305,15 @@ export function renderApprovalPage(
   <script>
     const input = document.getElementById("approval_secret");
     const button = document.getElementById("toggle_secret");
-    const icon = button.querySelector("i");
+    const openIcon = document.getElementById("eye_open");
+    const closedIcon = document.getElementById("eye_closed");
     button.addEventListener("click", () => {
       const revealing = input.type === "password";
       input.type = revealing ? "text" : "password";
       button.setAttribute("aria-label", revealing ? "Hide approval secret" : "Reveal approval secret");
       button.setAttribute("aria-pressed", revealing ? "true" : "false");
-      icon.className = revealing ? "fa-solid fa-eye-slash" : "fa-solid fa-eye";
+      openIcon.hidden = revealing;
+      closedIcon.hidden = !revealing;
     });
   </script>
 </body>
