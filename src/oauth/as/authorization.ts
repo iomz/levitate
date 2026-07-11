@@ -4,11 +4,11 @@ import type { LevitateConfig } from "../../config.js";
 import type { Logger } from "../../logging.js";
 import { getApprovalSecret, isApprovalSecretValid, PendingAuthorizationStore, renderApprovalExpiredPage, renderApprovalPage, type PendingAuthorization } from "./approval.js";
 import { AuthorizationCodeStore } from "./codes.js";
-import type { JsonClientStore } from "./store.js";
+import type { ClientStore } from "./store.js";
 import { isExactRegisteredRedirectUri, isValidPkceS256Challenge, parseRequestedScopes, stringFormValue } from "./validation.js";
 import type { OAuthRateLimiter } from "./rate-limit.js";
 
-export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, clients: JsonClientStore, codes: AuthorizationCodeStore, pendingAuthorizations: PendingAuthorizationStore, approvalSecret: string | undefined, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
+export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, clients: ClientStore, codes: AuthorizationCodeStore, pendingAuthorizations: PendingAuthorizationStore, approvalSecret: string | undefined, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
   const asConfig = config.oauth.as;
   app.get("/oauth/authorize", async (c) => {
     const url = new URL(c.req.url);

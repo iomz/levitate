@@ -3,12 +3,12 @@ import type { LevitateConfig } from "../../config.js";
 import type { Logger } from "../../logging.js";
 import { AuthorizationCodeStore, verifyPkceS256 } from "./codes.js";
 import type { AuthorizationServerKeys } from "./keys.js";
-import type { JsonClientStore } from "./store.js";
+import type { ClientStore } from "./store.js";
 import { issueAccessToken } from "./tokens.js";
 import { isValidPkceVerifier, stringFormValue } from "./validation.js";
 import type { OAuthRateLimiter } from "./rate-limit.js";
 
-export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: AuthorizationServerKeys, clients: JsonClientStore, codes: AuthorizationCodeStore, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
+export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: AuthorizationServerKeys, clients: ClientStore, codes: AuthorizationCodeStore, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
   const asConfig = config.oauth.as;
   app.post("/oauth/token", async (c) => {
     const form = await c.req.parseBody();

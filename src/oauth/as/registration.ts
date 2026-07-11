@@ -1,11 +1,11 @@
 import type { Hono } from "hono";
 import type { LevitateConfig } from "../../config.js";
 import type { Logger } from "../../logging.js";
-import type { JsonClientStore } from "./store.js";
+import type { ClientStore } from "./store.js";
 import { validateRegistration, type RegisterRequest } from "./validation.js";
 import type { OAuthRateLimiter } from "./rate-limit.js";
 
-export function registerClientRegistrationRoute(app: Hono, config: LevitateConfig, clients: JsonClientStore, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
+export function registerClientRegistrationRoute(app: Hono, config: LevitateConfig, clients: ClientStore, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
   const asConfig = config.oauth.as;
   app.post("/oauth/register", async (c) => {
     const retryAfter = rateLimiter?.consume("registration", "global");

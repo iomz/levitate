@@ -18,7 +18,14 @@ interface ClientStoreFile {
   clients: RegisteredClient[];
 }
 
-export class JsonClientStore {
+export interface ClientStore {
+  add(client: Omit<RegisteredClient, "client_id" | "created_at">): Promise<RegisteredClient>;
+  get(clientId: string): Promise<RegisteredClient | undefined>;
+  list(): Promise<RegisteredClient[]>;
+  revoke(clientId: string): Promise<RegisteredClient | undefined>;
+}
+
+export class JsonClientStore implements ClientStore {
   private readonly path: string;
   private writeChain: Promise<void> = Promise.resolve();
 

@@ -321,6 +321,22 @@ Pending approvals and authorization codes are pruned periodically and discarded 
 Cleanup timers do not keep Levitate running during shutdown.
 Registered clients persist in the JSON file configured by `oauth.as.client_store_file`.
 
+### Credential lifecycle and storage limits
+
+Current JSON client store uses atomic file replacement and serializes writes made through one Levitate process.
+It does not coordinate read-modify-write operations across processes or nodes.
+Run one Levitate server against each client store and stop that server before using mutating client-management commands.
+Future multi-node storage can implement the internal client-store interface without changing OAuth route logic.
+
+Client revocation blocks new authorization requests and token exchanges, including exchanges using authorization codes issued before revocation.
+Already-issued access tokens remain valid until their configured expiration because Levitate does not maintain an access-token denylist.
+Use short access-token lifetimes where rapid revocation matters.
+
+Current signing configuration supports one active RSA key and publishes one JWK.
+Changing the private key or key ID invalidates every token signed by the previous key immediately.
+Safe current rotation procedure is: stop Levitate, replace the key file, change `oauth.as.keys.key_id`, restart Levitate, then reauthorize clients.
+Overlapping old/new verification keys and zero-interruption rotation are not implemented.
+
 DCR is closed by default.
 Temporarily set `[oauth.as.dcr] enabled = true` while installing a ChatGPT Custom App, then set it back to `false` after the client appears in `oauth.as.client_store_file`.
 Existing registered clients can still authorize and exchange tokens while DCR is disabled.
