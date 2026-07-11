@@ -1,0 +1,28 @@
+# Single backend protected by JWTs from an external OIDC provider.
+# Replace issuer, audience, JWKS URI, and browser origin.
+
+[server]
+name = "example-oidc"
+host = "127.0.0.1"
+port = 8787
+mcp_path = "/mcp"
+
+[server.cors]
+allowed_origins = ["https://app.example.com"]
+
+[stdio]
+command = "node"
+args = ["test/fixtures/fake-stdio-server.mjs"]
+
+[auth]
+mode = "oidc"
+issuer = "https://tenant.example.com/"
+audience = "https://levitate.example.com"
+jwks_uri = "https://tenant.example.com/.well-known/jwks.json"
+# Optional identity restrictions. Empty arrays accept any valid token subject.
+allowed_subjects = []
+allowed_emails = []
+
+[tools]
+allow = ["fake_allowed"]
+deny = ["fake_denied"]

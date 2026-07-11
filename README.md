@@ -115,6 +115,27 @@ token_env = "LEVITATE_TOKEN"
 
 Real deployments can point `[stdio]` at any stdio MCP server and then use tool policy to filter or block exposed tools.
 
+## Configuration Examples
+
+Choose smallest example matching deployment:
+
+| Use case | Example | Notes |
+| --- | --- | --- |
+| Static bearer token | [`config/bearer.example.toml`](config/bearer.example.toml) | Small local, private, or manually managed deployment |
+| External OIDC/JWT | [`config/oidc.example.toml`](config/oidc.example.toml) | Auth0 or another RS256 JWKS-backed provider |
+| Local OAuth AS | [`config/oauth-as.example.toml`](config/oauth-as.example.toml) | ChatGPT Custom MCP with DCR, PKCE, manual owner approval, and local JWT issuance |
+| Multiple backends | [`config/multi-backend.example.toml`](config/multi-backend.example.toml) | Independent routes, processes, instructions, and tool policies behind shared auth |
+
+Copy an example to an ignored local file before adding machine paths or deployment values:
+
+```sh
+cp config/bearer.example.toml config/bearer.local.toml
+```
+
+Example files contain no secrets.
+Prefer environment variables for bearer tokens and approval secrets.
+Use absolute state/key paths when Levitate runs under a service manager with a different working directory.
+
 ## Server Configuration
 
 The MCP endpoint defaults to `/mcp`.
