@@ -18,6 +18,7 @@ export class StdioMcpBackend {
   );
   private transport?: StdioClientTransport;
   private ready = false;
+  private closing = false;
 
   constructor(
     private readonly config: LevitateConfig,
@@ -49,11 +50,15 @@ export class StdioMcpBackend {
 
     await this.client.connect(this.transport);
     const clientOnClose = this.transport.onclose;
+    const pid = this.transport.pid;
     this.transport.onclose = () => {
       this.ready = false;
-      this.logger.error("backend process stopped", {
-        pid: this.transport?.pid,
-      });
+      const fields = { pid, expected: this.closing };
+      if (this.closing) {
+        this.logger.info("backend process stopped", fields);
+      } else {
+        this.logger.error("backend process stopped unexpectedly", fields);
+      }
       clientOnClose?.();
     };
     this.ready = true;
@@ -72,6 +77,7 @@ export class StdioMcpBackend {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
     this.ready = false;
     await this.transport?.close();
   }

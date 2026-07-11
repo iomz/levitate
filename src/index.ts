@@ -49,12 +49,19 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info("levitate stopping", { signal });
+    const httpClosed = new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+    const forceCloseTimer = setTimeout(() => {
+      logger.warn("forcing remaining http connections closed", { signal });
+      if ("closeAllConnections" in server) server.closeAllConnections();
+    }, 1_000);
+    forceCloseTimer.unref();
     await Promise.all([
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => error ? reject(error) : resolve());
-      }),
+      httpClosed,
       backend.close(),
     ]);
+    clearTimeout(forceCloseTimer);
     oauthAuthorizationServer?.close();
     logger.info("levitate stopped", { signal });
     process.exit(0);

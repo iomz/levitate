@@ -46,6 +46,7 @@ OIDC/JWT validation is available for Auth0 and other RS256 JWKS-backed issuers.
 MCP servers can read or modify private data, and tunnel-published endpoints are public unless protected.
 `GET /health` reports process liveness and `GET /ready` reports stdio backend readiness.
 Both endpoints are unauthenticated for deployment checks; the MCP endpoint requires `Authorization: Bearer <token>`.
+Shutdown stops accepting HTTP traffic, gives existing connections one second to close, then force-closes persistent connections before exiting.
 
 ## Quick Start
 
