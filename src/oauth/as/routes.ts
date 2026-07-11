@@ -9,6 +9,7 @@ import { registerAuthorizationRoutes } from "./authorization.js";
 import { registerMetadataRoutes } from "./metadata.js";
 import { registerClientRegistrationRoute } from "./registration.js";
 import { registerTokenRoute } from "./token-endpoint.js";
+import { OAuthRateLimiter } from "./rate-limit.js";
 
 export interface OAuthAuthorizationServer {
   registerRoutes(app: Hono<any>): void;
@@ -30,6 +31,10 @@ export function createOAuthAuthorizationServer(
   const clients = new JsonClientStore(asConfig.client_store_file);
   const codes = new AuthorizationCodeStore();
   const pendingAuthorizations = new PendingAuthorizationStore();
+  const rateLimitConfig = asConfig.rate_limits;
+  const rateLimiter = rateLimitConfig
+    ? new OAuthRateLimiter(rateLimitConfig.window_seconds, rateLimitConfig)
+    : undefined;
   const cleanupInterval = setInterval(() => {
     const authorizationCodes = codes.pruneExpired();
     const approvals = pendingAuthorizations.pruneExpired();
@@ -45,7 +50,7 @@ export function createOAuthAuthorizationServer(
   return {
     registerRoutes(app: Hono<any>): void {
       registerMetadataRoutes(app, config, keys);
-      registerClientRegistrationRoute(app, config, clients, logger);
+      registerClientRegistrationRoute(app, config, clients, logger, rateLimiter);
 
       registerAuthorizationRoutes(
         app,
@@ -55,8 +60,9 @@ export function createOAuthAuthorizationServer(
         pendingAuthorizations,
         approvalSecret,
         logger,
+        rateLimiter,
       );
-      registerTokenRoute(app, config, keys, clients, codes, logger);
+      registerTokenRoute(app, config, keys, clients, codes, logger, rateLimiter);
     },
     close(): void {
       clearInterval(cleanupInterval);

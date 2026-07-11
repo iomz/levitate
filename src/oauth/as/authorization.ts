@@ -6,12 +6,19 @@ import { getApprovalSecret, isApprovalSecretValid, PendingAuthorizationStore, re
 import { AuthorizationCodeStore } from "./codes.js";
 import type { JsonClientStore } from "./store.js";
 import { isExactRegisteredRedirectUri, isValidPkceS256Challenge, parseRequestedScopes, stringFormValue } from "./validation.js";
+import type { OAuthRateLimiter } from "./rate-limit.js";
 
-export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, clients: JsonClientStore, codes: AuthorizationCodeStore, pendingAuthorizations: PendingAuthorizationStore, approvalSecret: string | undefined, logger: Logger): void {
+export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, clients: JsonClientStore, codes: AuthorizationCodeStore, pendingAuthorizations: PendingAuthorizationStore, approvalSecret: string | undefined, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
   const asConfig = config.oauth.as;
   app.get("/oauth/authorize", async (c) => {
     const url = new URL(c.req.url);
     const clientId = url.searchParams.get("client_id");
+    const retryAfter = rateLimiter?.consume("authorization", clientId ?? "unknown");
+    if (retryAfter) {
+      c.header("Retry-After", String(retryAfter));
+      logger.warn("oauth rate limit exceeded", { event: "authorization", outcome: "rate_limited", clientId });
+      return c.json({ error: "temporarily_unavailable" }, 429);
+    }
     const redirectUri = url.searchParams.get("redirect_uri");
     const state = url.searchParams.get("state") ?? undefined;
     const client = clientId ? await clients.get(clientId) : undefined;
@@ -123,6 +130,12 @@ export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, c
   app.post("/oauth/approval/:id", async (c) => {
     const pending = pendingAuthorizations.get(c.req.param("id"));
     if (!pending) return c.html(renderApprovalExpiredPage(), 404);
+    const retryAfter = rateLimiter?.consume("approval", pending.clientId);
+    if (retryAfter) {
+      c.header("Retry-After", String(retryAfter));
+      logger.warn("oauth rate limit exceeded", { event: "approval", outcome: "rate_limited", clientId: pending.clientId });
+      return c.json({ error: "temporarily_unavailable" }, 429);
+    }
 
     const form = await c.req.parseBody();
     if (stringFormValue(form.decision) !== "approve") {
@@ -202,4 +215,3 @@ function issueAuthorizationRedirect(
   if (pending.state) location.searchParams.set("state", pending.state);
   return location;
 }
-

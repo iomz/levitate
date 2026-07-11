@@ -3,10 +3,17 @@ import type { LevitateConfig } from "../../config.js";
 import type { Logger } from "../../logging.js";
 import type { JsonClientStore } from "./store.js";
 import { validateRegistration, type RegisterRequest } from "./validation.js";
+import type { OAuthRateLimiter } from "./rate-limit.js";
 
-export function registerClientRegistrationRoute(app: Hono, config: LevitateConfig, clients: JsonClientStore, logger: Logger): void {
+export function registerClientRegistrationRoute(app: Hono, config: LevitateConfig, clients: JsonClientStore, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
   const asConfig = config.oauth.as;
   app.post("/oauth/register", async (c) => {
+    const retryAfter = rateLimiter?.consume("registration", "global");
+    if (retryAfter) {
+      c.header("Retry-After", String(retryAfter));
+      logger.warn("oauth rate limit exceeded", { event: "client_registration", outcome: "rate_limited" });
+      return c.json({ error: "temporarily_unavailable" }, 429);
+    }
     if (!asConfig.dcr.enabled)
       return c.json({ error: "registration_disabled" }, 404);
 
@@ -62,4 +69,3 @@ export function registerClientRegistrationRoute(app: Hono, config: LevitateConfi
 
 
 }
-

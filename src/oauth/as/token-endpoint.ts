@@ -6,8 +6,9 @@ import type { AuthorizationServerKeys } from "./keys.js";
 import type { JsonClientStore } from "./store.js";
 import { issueAccessToken } from "./tokens.js";
 import { isValidPkceVerifier, stringFormValue } from "./validation.js";
+import type { OAuthRateLimiter } from "./rate-limit.js";
 
-export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: AuthorizationServerKeys, clients: JsonClientStore, codes: AuthorizationCodeStore, logger: Logger): void {
+export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: AuthorizationServerKeys, clients: JsonClientStore, codes: AuthorizationCodeStore, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
   const asConfig = config.oauth.as;
   app.post("/oauth/token", async (c) => {
     const form = await c.req.parseBody();
@@ -15,6 +16,12 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
     const code = stringFormValue(form.code);
     const redirectUri = stringFormValue(form.redirect_uri);
     const clientId = stringFormValue(form.client_id);
+    const retryAfter = rateLimiter?.consume("token", clientId ?? "unknown");
+    if (retryAfter) {
+      c.header("Retry-After", String(retryAfter));
+      logger.warn("oauth rate limit exceeded", { event: "token", outcome: "rate_limited", clientId });
+      return c.json({ error: "temporarily_unavailable" }, 429);
+    }
     const codeVerifier = stringFormValue(form.code_verifier);
     const resource = stringFormValue(form.resource);
 
@@ -95,4 +102,3 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
     });
   });
 }
-

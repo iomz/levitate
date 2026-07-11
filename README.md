@@ -276,6 +276,13 @@ key_id = "levitate-local-1"
 [oauth.as.dcr]
 enabled = true
 
+[oauth.as.rate_limits]
+window_seconds = 60
+registration = 10
+authorization = 30
+token = 60
+approval = 10
+
 [auth]
 mode = "levitate"
 ```
@@ -317,6 +324,11 @@ Registered clients persist in the JSON file configured by `oauth.as.client_store
 DCR is closed by default.
 Temporarily set `[oauth.as.dcr] enabled = true` while installing a ChatGPT Custom App, then set it back to `false` after the client appears in `oauth.as.client_store_file`.
 Existing registered clients can still authorize and exchange tokens while DCR is disabled.
+
+OAuth rate limits are optional and process-local.
+When configured, registration uses one gateway-wide bucket while authorization, token, and approval requests use client-specific buckets where a validated client identifier is available.
+Exceeded limits return `429` with `Retry-After` and do not log submitted secrets, codes, tokens, or PKCE verifiers.
+Multi-node deployments require a shared limiter design before these limits can provide deployment-wide enforcement.
 
 `approval = "auto"` immediately issues authorization codes after validation and is intended for private tests or temporary setup.
 Set `approval = "manual"` to require an explicit owner approval page before Levitate issues an authorization code.
