@@ -1,7 +1,55 @@
 import { describe, expect, it } from "vitest";
-import { parseConfigText } from "../src/config.js";
+import { getBackendConfigs, parseConfigText } from "../src/config.js";
 
 describe("config parsing", () => {
+  it("normalizes named multi-backend configuration", () => {
+    const config = parseConfigText(`
+[server]
+name = "gateway"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+
+[backends.notes]
+mcp_path = "/notes/mcp"
+[backends.notes.stdio]
+command = "notes-mcp"
+[backends.notes.tools]
+deny = ["delete_note"]
+
+[backends.ingest]
+name = "health-ingest"
+mcp_path = "/ingest/mcp"
+[backends.ingest.stdio]
+command = "ingest-mcp"
+`);
+
+    expect(getBackendConfigs(config)).toEqual([
+      expect.objectContaining({ id: "notes", name: "notes", mcp_path: "/notes/mcp" }),
+      expect.objectContaining({ id: "ingest", name: "health-ingest", mcp_path: "/ingest/mcp" }),
+    ]);
+  });
+
+  it("rejects duplicate and reserved backend paths", () => {
+    const parse = (secondPath: string) => parseConfigText(`
+[server]
+name = "gateway"
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+[backends.one]
+mcp_path = "/health"
+[backends.one.stdio]
+command = "one"
+[backends.two]
+mcp_path = "${secondPath}"
+[backends.two.stdio]
+command = "two"
+`);
+    expect(() => parse("/other/mcp")).toThrow("backend mcp_path is reserved");
+    expect(() => parse("/health")).toThrow("backend mcp_path values must be unique");
+  });
   it("parses required MVP config", () => {
     const config = parseConfigText(`
 [server]
@@ -25,7 +73,7 @@ deny = ["delete_note"]
     expect(config.server.name).toBe("brain");
     expect(config.server.mcp_path).toBe("/mcp");
     expect(config.server.cors).toBeUndefined();
-    expect(config.stdio.command).toBe("node");
+    expect(config.stdio?.command).toBe("node");
     expect(config.auth.mode).toBe("bearer");
     expect(config.tools.allow).toEqual(["search"]);
     expect(config.tools.deny).toEqual(["delete_note"]);

@@ -5,7 +5,7 @@ import { cors } from "hono/cors";
 import type { ServerType } from "@hono/node-server";
 import type { Authenticator } from "./auth/types.js";
 import { AuthError } from "./auth/types.js";
-import type { LevitateConfig } from "./config.js";
+import { getBackendConfigs, type BackendConfig, type LevitateConfig } from "./config.js";
 import type { Logger } from "./logging.js";
 import type { StdioMcpBackend } from "./mcp/backend.js";
 import { handleMcpRequest } from "./mcp/proxy.js";
@@ -14,10 +14,17 @@ import type { OAuthAuthorizationServer } from "./oauth/as/routes.js";
 export interface AppContext {
   config: LevitateConfig;
   authenticator: Authenticator;
-  backend: StdioMcpBackend;
+  backend?: StdioMcpBackend;
   instructions?: string;
+  backends?: BackendRuntime[];
   logger: Logger;
   oauthAuthorizationServer?: OAuthAuthorizationServer;
+}
+
+export interface BackendRuntime {
+  config: BackendConfig;
+  backend: StdioMcpBackend;
+  instructions?: string;
 }
 
 type AppEnv = {
@@ -28,6 +35,11 @@ type AppEnv = {
 
 export function createApp(context: AppContext): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
+  const backends = context.backends ?? [{
+    config: getBackendConfigs(context.config)[0],
+    backend: context.backend!,
+    instructions: context.instructions,
+  }];
   const allowedOrigins = context.config.server.cors?.allowed_origins;
 
   app.use("*", cors({
@@ -61,10 +73,17 @@ export function createApp(context: AppContext): Hono<AppEnv> {
   }));
 
   app.get("/ready", (c) => {
-    const ready = context.backend.isReady?.() ?? true;
+    const states = backends.map(({ config, backend }) => ({
+      id: config.id,
+      name: config.name,
+      path: config.mcp_path,
+      ready: backend.isReady?.() ?? true,
+    }));
+    const ready = states.every((state) => state.ready);
     return c.json({
       status: ready ? "ready" : "not_ready",
       name: context.config.server.name,
+      backends: states,
     }, ready ? 200 : 503);
   });
 
@@ -82,7 +101,7 @@ export function createApp(context: AppContext): Hono<AppEnv> {
 
   context.oauthAuthorizationServer?.registerRoutes(app);
 
-  app.all(context.config.server.mcp_path, async (c) => {
+  for (const runtime of backends) app.all(runtime.config.mcp_path, async (c) => {
     if (c.req.method === "OPTIONS") return c.body(null, 204);
 
     try {
@@ -106,12 +125,13 @@ export function createApp(context: AppContext): Hono<AppEnv> {
     context.logger.info("remote mcp request", {
       method: c.req.method,
       requestId: c.get("requestId"),
+      backend: runtime.config.id,
     });
     return handleMcpRequest(c.req.raw, {
-      serverName: context.config.server.name,
-      instructions: context.instructions,
-      backend: context.backend,
-      policy: context.config.tools,
+      serverName: runtime.config.name,
+      instructions: runtime.instructions,
+      backend: runtime.backend,
+      policy: runtime.config.tools,
       logger: context.logger,
     });
   });
@@ -128,7 +148,7 @@ export function startHttpServer(context: AppContext): ServerType {
   context.logger.info("http server starting", {
     host,
     port,
-    endpoint: context.config.server.mcp_path,
+    endpoints: getBackendConfigs(context.config).map((backend) => backend.mcp_path),
   });
 
   return serve({

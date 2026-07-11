@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createAuthenticator } from "./auth/index.js";
-import { getConfigPath, loadConfig } from "./config.js";
+import { getBackendConfigs, getConfigPath, loadConfig } from "./config.js";
 import { createLogger } from "./logging.js";
 import { StdioMcpBackend } from "./mcp/backend.js";
 import { loadInstructions } from "./mcp/instructions.js";
@@ -26,20 +26,32 @@ async function main(): Promise<void> {
     : undefined;
 
   const authenticator = createAuthenticator(config, authorizationServerKeys);
-  const instructions = await loadInstructions(config);
-  const backend = new StdioMcpBackend(config, logger);
+  const backendConfigs = getBackendConfigs(config);
+  const backends = await Promise.all(backendConfigs.map(async (backendConfig) => ({
+    config: backendConfig,
+    backend: new StdioMcpBackend(backendConfig, logger),
+    instructions: await loadInstructions(backendConfig),
+  })));
 
   logger.info("levitate starting", {
     name: config.server.name,
-    instructionsLoaded: Boolean(instructions),
+    backends: backendConfigs.map(({ id, mcp_path }) => ({ id, path: mcp_path })),
   });
 
-  await backend.start();
+  const startedBackends: StdioMcpBackend[] = [];
+  try {
+    for (const runtime of backends) {
+      await runtime.backend.start();
+      startedBackends.push(runtime.backend);
+    }
+  } catch (error) {
+    await Promise.allSettled(startedBackends.map((backend) => backend.close()));
+    throw error;
+  }
   const server = startHttpServer({
     config,
     authenticator,
-    backend,
-    instructions,
+    backends,
     logger,
     oauthAuthorizationServer,
   });
@@ -59,7 +71,7 @@ async function main(): Promise<void> {
     forceCloseTimer.unref();
     await Promise.all([
       httpClosed,
-      backend.close(),
+      ...backends.map(({ backend }) => backend.close()),
     ]);
     clearTimeout(forceCloseTimer);
     oauthAuthorizationServer?.close();

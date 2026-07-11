@@ -8,7 +8,7 @@ import type {
   CallToolResult,
   ListToolsResult,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { LevitateConfig } from "../config.js";
+import type { BackendConfig } from "../config.js";
 import type { Logger } from "../logging.js";
 
 export class StdioMcpBackend {
@@ -21,7 +21,7 @@ export class StdioMcpBackend {
   private closing = false;
 
   constructor(
-    private readonly config: LevitateConfig,
+    private readonly config: BackendConfig,
     private readonly logger: Logger,
   ) {}
 

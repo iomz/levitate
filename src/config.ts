@@ -187,6 +187,31 @@ const AuthSchema = z.union([
   }
 });
 
+const StdioSchema = z.object({
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+  cwd: z.string().min(1).optional(),
+});
+
+const InstructionsSchema = z.object({
+  text: z.string().optional(),
+  file: z.string().min(1).optional(),
+}).default({});
+
+const ToolsSchema = z.object({
+  allow: z.array(z.string().min(1)).optional(),
+  deny: z.array(z.string().min(1)).default([]),
+}).default({ deny: [] });
+
+const NamedBackendSchema = z.object({
+  name: z.string().min(1).optional(),
+  mcp_path: McpPathSchema,
+  stdio: StdioSchema,
+  env: z.record(z.string()).default({}),
+  instructions: InstructionsSchema,
+  tools: ToolsSchema,
+});
+
 const ConfigSchema = z.object({
   server: z.object({
     name: z.string().min(1),
@@ -198,26 +223,39 @@ const ConfigSchema = z.object({
       allowed_origins: z.array(CorsOriginSchema).min(1),
     }).optional(),
   }),
-  stdio: z.object({
-    command: z.string().min(1),
-    args: z.array(z.string()).default([]),
-    cwd: z.string().min(1).optional(),
-  }),
+  stdio: StdioSchema.optional(),
+  backends: z.record(NamedBackendSchema).optional(),
   env: z.record(z.string()).default({}),
-  instructions: z.object({
-    text: z.string().optional(),
-    file: z.string().min(1).optional(),
-  }).default({}),
+  instructions: InstructionsSchema,
   auth: AuthSchema,
   oauth: z.object({
     resource: OAuthResourceSchema.default({ enabled: false }),
     as: OAuthAuthorizationServerSchema.default({ enabled: false }),
   }).default({ resource: { enabled: false }, as: { enabled: false } }),
-  tools: z.object({
-    allow: z.array(z.string().min(1)).optional(),
-    deny: z.array(z.string().min(1)).default([]),
-  }).default({ deny: [] }),
+  tools: ToolsSchema,
 }).superRefine((value, context) => {
+  const backendEntries = Object.entries(value.backends ?? {});
+  if (!value.stdio && !backendEntries.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "stdio or backends must configure at least one backend", path: ["backends"] });
+  }
+  if (value.stdio && backendEntries.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "stdio and backends cannot be configured together", path: ["backends"] });
+  }
+  const paths = backendEntries.map(([, backend]) => backend.mcp_path);
+  if (new Set(paths).size !== paths.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "backend mcp_path values must be unique", path: ["backends"] });
+  }
+  for (const path of paths) {
+    if (["/health", "/ready"].includes(path) || path.startsWith("/oauth") || path.startsWith("/.well-known")) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: `backend mcp_path is reserved: ${path}`, path: ["backends"] });
+    }
+  }
+  if (backendEntries.length > 1 && value.oauth.resource.enabled) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "oauth.resource is currently supported only with one backend", path: ["oauth", "resource"] });
+  }
+  if (backendEntries.length > 1 && value.auth.mode === "levitate") {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "auth.mode levitate is currently supported only with one backend", path: ["auth", "mode"] });
+  }
   if (value.auth.mode === "levitate" && !value.oauth.as.enabled) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -248,6 +286,31 @@ const ConfigSchema = z.object({
 
 export type LevitateConfig = z.infer<typeof ConfigSchema>;
 export type AuthConfig = LevitateConfig["auth"];
+export interface BackendConfig {
+  id: string;
+  name: string;
+  mcp_path: string;
+  stdio: z.infer<typeof StdioSchema>;
+  env: Record<string, string>;
+  instructions: z.infer<typeof InstructionsSchema>;
+  tools: z.infer<typeof ToolsSchema>;
+}
+
+export function getBackendConfigs(config: LevitateConfig): BackendConfig[] {
+  if (config.backends) {
+    return Object.entries(config.backends).map(([id, backend]) => ({
+      id,
+      name: backend.name ?? id,
+      mcp_path: backend.mcp_path,
+      stdio: backend.stdio,
+      env: backend.env,
+      instructions: backend.instructions,
+      tools: backend.tools,
+    }));
+  }
+  if (!config.stdio) throw new Error("stdio backend configuration missing");
+  return [{ id: "default", name: config.server.name, mcp_path: config.server.mcp_path, stdio: config.stdio, env: config.env, instructions: config.instructions, tools: config.tools }];
+}
 
 export function parseConfigText(text: string): LevitateConfig {
   return ConfigSchema.parse(parse(text));

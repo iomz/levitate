@@ -9,7 +9,7 @@ import type {
 } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { BearerAuthenticator } from "../src/auth/bearer.js";
-import type { LevitateConfig } from "../src/config.js";
+import { getBackendConfigs, type LevitateConfig } from "../src/config.js";
 import type { Logger } from "../src/logging.js";
 import { StdioMcpBackend } from "../src/mcp/backend.js";
 import { createApp } from "../src/server.js";
@@ -132,6 +132,7 @@ describe("mcp endpoint", () => {
     await expect(ready.json()).resolves.toEqual({
       status: "not_ready",
       name: "test",
+      backends: [{ id: "default", name: "test", path: "/mcp", ready: false }],
     });
   });
 
@@ -451,6 +452,46 @@ describe("mcp endpoint", () => {
     ]);
   });
 
+  it("isolates named backends by MCP path", async () => {
+    const namedBackend = (toolName: string) => ({
+      async listTools() {
+        return { tools: [{ name: toolName, inputSchema: { type: "object", properties: {} } }] };
+      },
+      async callTool() {
+        return { content: [{ type: "text", text: toolName }] };
+      },
+      isReady: () => true,
+    }) as unknown as StdioMcpBackend;
+    const backendConfig = (id: string, path: string) => ({
+      id,
+      name: id,
+      mcp_path: path,
+      stdio: { command: "unused", args: [] },
+      env: {},
+      instructions: {},
+      tools: { deny: [] },
+    });
+    const app = createApp({
+      config,
+      authenticator: new BearerAuthenticator("secret"),
+      backends: [
+        { config: backendConfig("notes", "/notes/mcp"), backend: namedBackend("notes_search") },
+        { config: backendConfig("ingest", "/ingest/mcp"), backend: namedBackend("ingest_sync") },
+      ],
+      logger,
+    });
+
+    for (const [path, expected] of [["/notes/mcp", "notes_search"], ["/ingest/mcp", "ingest_sync"]]) {
+      const client = new Client({ name: "test-client", version: "0.1.0" }, { capabilities: {} });
+      clients.push(client);
+      await client.connect(new StreamableHTTPClientTransport(new URL(`http://localhost${path}`), {
+        requestInit: { headers: { authorization: "Bearer secret" } },
+        fetch: async (input, init) => app.fetch(new Request(input, init)),
+      }));
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([expected]);
+    }
+  });
+
   it("proxies a real stdio backend and returns tool errors for denied direct calls", async () => {
     const stdioConfig: LevitateConfig = {
       ...config,
@@ -467,7 +508,7 @@ describe("mcp endpoint", () => {
         deny: ["fake_denied"],
       },
     };
-    const stdioBackend = new StdioMcpBackend(stdioConfig, logger);
+    const stdioBackend = new StdioMcpBackend(getBackendConfigs(stdioConfig)[0], logger);
     await stdioBackend.start();
     backends.push(stdioBackend);
 

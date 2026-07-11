@@ -402,16 +402,45 @@ file = "/path/to/SKILL.md"
 
 Levitate passes these instructions through the MCP server initialization result using the official TypeScript SDK `Server` `instructions` option.
 
-## Multi-backend Routing Model
+## Multi-backend Routing
 
-Levitate is intended to host multiple MCP backends by assigning each backend its own HTTP MCP endpoint:
+Levitate can host multiple MCP backends by assigning each backend its own HTTP MCP endpoint:
 
 - `/notes/mcp`
 - `/ingest/mcp`
 - `/tools/mcp`
 - `/example/mcp`
 
-Each endpoint should behave as an independent MCP server backed by one stdio MCP backend.
+Each endpoint behaves as an independent MCP server backed by one stdio MCP backend.
+
+```toml
+[server]
+name = "private-gateway"
+host = "127.0.0.1"
+port = 8787
+
+[backends.notes]
+mcp_path = "/notes/mcp"
+[backends.notes.stdio]
+command = "notes-mcp"
+[backends.notes.tools]
+deny = ["delete_note"]
+
+[backends.ingest]
+mcp_path = "/ingest/mcp"
+[backends.ingest.stdio]
+command = "ingest-mcp"
+```
+
+Named backends cannot be combined with legacy top-level `[stdio]` configuration.
+Backend paths must be unique and cannot overlap health, readiness, OAuth, or well-known routes.
+Policies, instructions, environment, process lifecycle, and readiness remain backend-specific.
+`GET /ready` succeeds only when every backend is ready and includes per-backend states.
+Startup failure closes every backend already started before Levitate exits.
+
+Static bearer and external OIDC authentication apply at gateway level across every backend.
+Current local Levitate authorization server and OAuth protected-resource metadata remain single-backend-only because each MCP endpoint requires distinct resource discovery and audience semantics.
+Configuration rejects those OAuth modes with multiple named backends rather than accepting tokens for an unintended route.
 
 Levitate does not merge multiple backend tool namespaces into a single `/mcp` endpoint by default.
 MCP already provides tool discovery through `tools/list`, so Levitate should preserve backend tool names and schemas unless an explicit policy filters or blocks them.
