@@ -1,10 +1,11 @@
 import { serve } from "@hono/node-server";
+import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { ServerType } from "@hono/node-server";
 import type { Authenticator } from "./auth/types.js";
 import { AuthError } from "./auth/types.js";
-import type { LevitateConfig } from "./config.js";
+import { getBackendConfigs, type BackendConfig, type LevitateConfig } from "./config.js";
 import type { Logger } from "./logging.js";
 import type { StdioMcpBackend } from "./mcp/backend.js";
 import { handleMcpRequest } from "./mcp/proxy.js";
@@ -13,17 +14,38 @@ import type { OAuthAuthorizationServer } from "./oauth/as/routes.js";
 export interface AppContext {
   config: LevitateConfig;
   authenticator: Authenticator;
-  backend: StdioMcpBackend;
+  backend?: StdioMcpBackend;
   instructions?: string;
+  backends?: BackendRuntime[];
   logger: Logger;
   oauthAuthorizationServer?: OAuthAuthorizationServer;
 }
 
-export function createApp(context: AppContext): Hono {
-  const app = new Hono();
+export interface BackendRuntime {
+  config: BackendConfig;
+  backend: StdioMcpBackend;
+  instructions?: string;
+}
+
+type AppEnv = {
+  Variables: {
+    requestId: string;
+  };
+};
+
+export function createApp(context: AppContext): Hono<AppEnv> {
+  const app = new Hono<AppEnv>();
+  const backends = context.backends ?? [{
+    config: getBackendConfigs(context.config)[0],
+    backend: context.backend!,
+    instructions: context.instructions,
+  }];
+  const allowedOrigins = context.config.server.cors?.allowed_origins;
 
   app.use("*", cors({
-    origin: "*",
+    origin: allowedOrigins
+      ? (origin) => allowedOrigins.includes(origin) ? origin : undefined
+      : "*",
     allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
     allowHeaders: [
       "Authorization",
@@ -35,10 +57,35 @@ export function createApp(context: AppContext): Hono {
     exposeHeaders: ["mcp-session-id", "mcp-protocol-version", "WWW-Authenticate"],
   }));
 
+  app.use("*", async (c, next) => {
+    const supplied = c.req.header("x-request-id");
+    const requestId = supplied && /^[A-Za-z0-9._:-]{1,128}$/.test(supplied)
+      ? supplied
+      : randomUUID();
+    c.set("requestId", requestId);
+    c.header("x-request-id", requestId);
+    await next();
+  });
+
   app.get("/health", (c) => c.json({
     status: "ok",
     name: context.config.server.name,
   }));
+
+  app.get("/ready", (c) => {
+    const states = backends.map(({ config, backend }) => ({
+      id: config.id,
+      name: config.name,
+      path: config.mcp_path,
+      ready: backend.isReady?.() ?? true,
+    }));
+    const ready = states.every((state) => state.ready);
+    return c.json({
+      status: ready ? "ready" : "not_ready",
+      name: context.config.server.name,
+      backends: states,
+    }, ready ? 200 : 503);
+  });
 
   if (context.config.oauth.resource.enabled) {
     app.get("/.well-known/oauth-protected-resource", (c) => {
@@ -54,14 +101,17 @@ export function createApp(context: AppContext): Hono {
 
   context.oauthAuthorizationServer?.registerRoutes(app);
 
-  app.all(context.config.server.mcp_path, async (c) => {
+  for (const runtime of backends) app.all(runtime.config.mcp_path, async (c) => {
     if (c.req.method === "OPTIONS") return c.body(null, 204);
 
     try {
       await context.authenticator.authenticate(c.req.raw);
     } catch (error) {
       const message = error instanceof Error ? error.message : "auth failed";
-      context.logger.warn("auth failed", { message });
+      context.logger.warn("auth failed", {
+        message,
+        requestId: c.get("requestId"),
+      });
       const resourceMetadataUrl = getResourceMetadataUrl(context.config);
       if (resourceMetadataUrl) {
         c.header("WWW-Authenticate", `Bearer resource_metadata="${resourceMetadataUrl}"`);
@@ -72,12 +122,16 @@ export function createApp(context: AppContext): Hono {
       return c.json({ error: "auth failed" }, 401);
     }
 
-    context.logger.info("remote mcp request", { method: c.req.method });
+    context.logger.info("remote mcp request", {
+      method: c.req.method,
+      requestId: c.get("requestId"),
+      backend: runtime.config.id,
+    });
     return handleMcpRequest(c.req.raw, {
-      serverName: context.config.server.name,
-      instructions: context.instructions,
-      backend: context.backend,
-      policy: context.config.tools,
+      serverName: runtime.config.name,
+      instructions: runtime.instructions,
+      backend: runtime.backend,
+      policy: runtime.config.tools,
       logger: context.logger,
     });
   });
@@ -94,7 +148,7 @@ export function startHttpServer(context: AppContext): ServerType {
   context.logger.info("http server starting", {
     host,
     port,
-    endpoint: context.config.server.mcp_path,
+    endpoints: getBackendConfigs(context.config).map((backend) => backend.mcp_path),
   });
 
   return serve({

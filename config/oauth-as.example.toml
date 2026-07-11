@@ -1,0 +1,56 @@
+# Private single-backend deployment using Levitate's local OAuth AS facade.
+# Generate RSA key before startup and set LEVITATE_APPROVAL_SECRET.
+# Enable DCR only while registering a new client.
+
+[server]
+name = "example-local-oauth"
+host = "127.0.0.1"
+port = 8787
+mcp_path = "/private/mcp"
+
+[server.cors]
+allowed_origins = ["https://chatgpt.com"]
+
+[stdio]
+command = "node"
+args = ["test/fixtures/fake-stdio-server.mjs"]
+
+[oauth.resource]
+enabled = true
+resource = "https://levitate.example.com/private/mcp"
+authorization_servers = ["https://levitate.example.com"]
+scopes_supported = ["example:read", "example:write"]
+
+[oauth.as]
+enabled = true
+issuer = "https://levitate.example.com"
+subject = "local-owner"
+approval = "manual"
+approval_secret_env = "LEVITATE_APPROVAL_SECRET"
+allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
+scopes_supported = ["example:read", "example:write"]
+default_scopes = ["example:read"]
+access_token_ttl_seconds = 900
+authorization_code_ttl_seconds = 300
+client_store_file = "state/oauth-clients.json"
+
+[oauth.as.dcr]
+enabled = false
+
+[oauth.as.keys]
+private_key_file = "state/oauth-private-key.pem"
+key_id = "example-local-1"
+
+[oauth.as.rate_limits]
+window_seconds = 60
+registration = 10
+authorization = 30
+token = 60
+approval = 10
+
+[auth]
+mode = "levitate"
+
+[tools]
+allow = ["fake_allowed"]
+deny = ["fake_denied"]

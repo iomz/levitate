@@ -1,7 +1,80 @@
 import { describe, expect, it } from "vitest";
-import { parseConfigText } from "../src/config.js";
+import { getBackendConfigs, parseConfigText } from "../src/config.js";
 
 describe("config parsing", () => {
+  it("rejects empty named backends combined with legacy stdio", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "gateway"
+[stdio]
+command = "node"
+[backends]
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`)).toThrow("stdio and backends cannot be configured together");
+  });
+
+  it("rejects reserved legacy MCP paths", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "gateway"
+mcp_path = "/health"
+[stdio]
+command = "node"
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`)).toThrow("backend mcp_path is reserved: /health");
+  });
+  it("normalizes named multi-backend configuration", () => {
+    const config = parseConfigText(`
+[server]
+name = "gateway"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+
+[backends.notes]
+mcp_path = "/notes/mcp"
+[backends.notes.stdio]
+command = "notes-mcp"
+[backends.notes.tools]
+deny = ["delete_note"]
+
+[backends.ingest]
+name = "health-ingest"
+mcp_path = "/ingest/mcp"
+[backends.ingest.stdio]
+command = "ingest-mcp"
+`);
+
+    expect(getBackendConfigs(config)).toEqual([
+      expect.objectContaining({ id: "notes", name: "notes", mcp_path: "/notes/mcp" }),
+      expect.objectContaining({ id: "ingest", name: "health-ingest", mcp_path: "/ingest/mcp" }),
+    ]);
+  });
+
+  it("rejects duplicate and reserved backend paths", () => {
+    const parse = (secondPath: string) => parseConfigText(`
+[server]
+name = "gateway"
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+[backends.one]
+mcp_path = "/health"
+[backends.one.stdio]
+command = "one"
+[backends.two]
+mcp_path = "${secondPath}"
+[backends.two.stdio]
+command = "two"
+`);
+    expect(() => parse("/other/mcp")).toThrow("backend mcp_path is reserved");
+    expect(() => parse("/health")).toThrow("backend mcp_path values must be unique");
+  });
   it("parses required MVP config", () => {
     const config = parseConfigText(`
 [server]
@@ -24,10 +97,58 @@ deny = ["delete_note"]
 
     expect(config.server.name).toBe("brain");
     expect(config.server.mcp_path).toBe("/mcp");
-    expect(config.stdio.command).toBe("node");
+    expect(config.server.cors).toBeUndefined();
+    expect(config.stdio?.command).toBe("node");
     expect(config.auth.mode).toBe("bearer");
     expect(config.tools.allow).toEqual(["search"]);
     expect(config.tools.deny).toEqual(["delete_note"]);
+  });
+
+  it("parses allowed CORS origins", () => {
+    const config = parseConfigText(`
+[server]
+name = "brain"
+
+[server.cors]
+allowed_origins = ["https://chatgpt.com", "http://localhost:3000"]
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`);
+
+    expect(config.server.cors?.allowed_origins).toEqual([
+      "https://chatgpt.com",
+      "http://localhost:3000",
+    ]);
+  });
+
+  it("rejects malformed CORS origins", () => {
+    const parse = (origin: string) => parseConfigText(`
+[server]
+name = "brain"
+
+[server.cors]
+allowed_origins = ["${origin}"]
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`);
+
+    expect(() => parse("https://example.com/path")).toThrow(
+      "server.cors.allowed_origins must contain HTTP(S) origins without paths",
+    );
+    expect(() => parse("ftp://example.com")).toThrow(
+      "server.cors.allowed_origins must contain HTTP(S) origins without paths",
+    );
+    expect(() => parse("not-a-url")).toThrow();
   });
 
   it("parses a custom mcp path", () => {

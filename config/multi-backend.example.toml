@@ -1,0 +1,40 @@
+# One gateway exposing two independent stdio MCP servers.
+# Multi-backend mode currently supports static bearer or external OIDC auth.
+
+[server]
+name = "example-multi-backend"
+host = "127.0.0.1"
+port = 8787
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+
+[backends.notes]
+name = "notes"
+mcp_path = "/notes/mcp"
+
+[backends.notes.stdio]
+command = "node"
+args = ["test/fixtures/fake-stdio-server.mjs"]
+
+[backends.notes.instructions]
+text = "Read-only notes endpoint."
+
+[backends.notes.tools]
+allow = ["fake_allowed"]
+deny = ["fake_denied"]
+
+[backends.admin]
+name = "admin"
+mcp_path = "/admin/mcp"
+
+[backends.admin.stdio]
+command = "node"
+args = ["test/fixtures/fake-stdio-server.mjs"]
+
+[backends.admin.instructions]
+text = "Restricted administrative endpoint."
+
+[backends.admin.tools]
+allow = ["fake_denied"]

@@ -8,7 +8,7 @@ import type {
   CallToolResult,
   ListToolsResult,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { LevitateConfig } from "../config.js";
+import type { BackendConfig } from "../config.js";
 import type { Logger } from "../logging.js";
 
 export class StdioMcpBackend {
@@ -17,9 +17,11 @@ export class StdioMcpBackend {
     { capabilities: {} },
   );
   private transport?: StdioClientTransport;
+  private ready = false;
+  private closing = false;
 
   constructor(
-    private readonly config: LevitateConfig,
+    private readonly config: BackendConfig,
     private readonly logger: Logger,
   ) {}
 
@@ -47,6 +49,19 @@ export class StdioMcpBackend {
     });
 
     await this.client.connect(this.transport);
+    const clientOnClose = this.transport.onclose;
+    const pid = this.transport.pid;
+    this.transport.onclose = () => {
+      this.ready = false;
+      const fields = { pid, expected: this.closing };
+      if (this.closing) {
+        this.logger.info("backend process stopped", fields);
+      } else {
+        this.logger.error("backend process stopped unexpectedly", fields);
+      }
+      clientOnClose?.();
+    };
+    this.ready = true;
 
     this.logger.info("backend process started", {
       pid: this.transport.pid,
@@ -62,6 +77,12 @@ export class StdioMcpBackend {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
+    this.ready = false;
     await this.transport?.close();
+  }
+
+  isReady(): boolean {
+    return this.ready;
   }
 }

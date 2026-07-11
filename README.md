@@ -44,7 +44,9 @@ Levitate requires authentication for the MCP endpoint.
 Static bearer tokens are available for local/dev/simple deployments.
 OIDC/JWT validation is available for Auth0 and other RS256 JWKS-backed issuers.
 MCP servers can read or modify private data, and tunnel-published endpoints are public unless protected.
-`GET /health` is unauthenticated for deployment checks; the MCP endpoint requires `Authorization: Bearer <token>`.
+`GET /health` reports process liveness and `GET /ready` reports backend readiness.
+Both endpoints are unauthenticated for deployment checks; the MCP endpoint requires `Authorization: Bearer <token>`.
+Shutdown stops accepting HTTP traffic, gives existing connections one second to close, then force-closes persistent connections before exiting.
 
 ## Quick Start
 
@@ -79,6 +81,12 @@ Health check:
 curl http://127.0.0.1:8787/health
 ```
 
+Readiness check:
+
+```sh
+curl http://127.0.0.1:8787/ready
+```
+
 Authenticated MCP clients must send:
 
 ```text
@@ -107,6 +115,27 @@ token_env = "LEVITATE_TOKEN"
 
 Real deployments can point `[stdio]` at any stdio MCP server and then use tool policy to filter or block exposed tools.
 
+## Configuration Examples
+
+Choose smallest example matching deployment:
+
+| Use case | Example | Notes |
+| --- | --- | --- |
+| Static bearer token | [`config/bearer.example.toml`](config/bearer.example.toml) | Small local, private, or manually managed deployment |
+| External OIDC/JWT | [`config/oidc.example.toml`](config/oidc.example.toml) | Auth0 or another RS256 JWKS-backed provider |
+| Local OAuth AS | [`config/oauth-as.example.toml`](config/oauth-as.example.toml) | ChatGPT Custom MCP with DCR, PKCE, manual owner approval, and local JWT issuance |
+| Multiple backends | [`config/multi-backend.example.toml`](config/multi-backend.example.toml) | Independent routes, processes, instructions, and tool policies behind shared auth |
+
+Copy an example to an ignored local file before adding machine paths or deployment values:
+
+```sh
+cp config/bearer.example.toml config/bearer.local.toml
+```
+
+Example files contain no secrets.
+Prefer environment variables for bearer tokens and approval secrets.
+Use absolute state/key paths when Levitate runs under a service manager with a different working directory.
+
 ## Server Configuration
 
 The MCP endpoint defaults to `/mcp`.
@@ -121,6 +150,20 @@ mcp_path = "/brain/mcp"
 The path must start with `/`.
 `GET /health` remains unchanged.
 This config does not enable multi-backend routing or backend aggregation.
+
+### CORS
+
+Levitate permits every browser origin by default for backward compatibility.
+Restrict browser access with an exact origin allowlist:
+
+```toml
+[server.cors]
+allowed_origins = ["https://chatgpt.com", "https://example.com"]
+```
+
+Origins must use HTTP or HTTPS and cannot contain paths, queries, or fragments.
+Requests without an `Origin` header remain available to non-browser MCP clients.
+CORS does not replace bearer authentication or OAuth validation.
 
 ## Auth Configuration
 
@@ -255,6 +298,13 @@ key_id = "levitate-local-1"
 [oauth.as.dcr]
 enabled = true
 
+[oauth.as.rate_limits]
+window_seconds = 60
+registration = 10
+authorization = 30
+token = 60
+approval = 10
+
 [auth]
 mode = "levitate"
 ```
@@ -289,11 +339,36 @@ Dynamic Client Registration accepts public clients only.
 Registered redirect URIs must be absolute HTTPS URLs and match `oauth.as.allowed_redirect_uri_prefixes`.
 Levitate does not issue client secrets.
 Authorization codes are short-lived, single-use, and stored in memory only.
+Pending approvals and authorization codes are pruned periodically and discarded on process exit.
+Cleanup timers do not keep Levitate running during shutdown.
 Registered clients persist in the JSON file configured by `oauth.as.client_store_file`.
+
+### Credential lifecycle and storage limits
+
+Current JSON client store uses atomic file replacement and serializes writes made through one Levitate process.
+It does not coordinate read-modify-write operations across processes or nodes.
+Run one Levitate server against each client store and stop that server before using mutating client-management commands.
+Future multi-node storage can implement the internal client-store interface without changing OAuth route logic.
+
+Client revocation blocks new authorization requests and token exchanges, including exchanges using authorization codes issued before revocation.
+Already-issued access tokens remain valid until their configured expiration because Levitate does not maintain an access-token denylist.
+Use short access-token lifetimes where rapid revocation matters.
+
+Current signing configuration supports one active RSA key and publishes one JWK.
+Changing the private key or key ID invalidates every token signed by the previous key immediately.
+Safe current rotation procedure is: stop Levitate, replace the key file, change `oauth.as.keys.key_id`, restart Levitate, then reauthorize clients.
+Overlapping old/new verification keys and zero-interruption rotation are not implemented.
 
 DCR is closed by default.
 Temporarily set `[oauth.as.dcr] enabled = true` while installing a ChatGPT Custom App, then set it back to `false` after the client appears in `oauth.as.client_store_file`.
 Existing registered clients can still authorize and exchange tokens while DCR is disabled.
+
+OAuth rate limits are optional and process-local.
+When configured, registration uses one gateway-wide bucket while authorization, token, and approval requests use client-specific buckets where a validated client identifier is available.
+Exceeded limits return `429` with `Retry-After` and do not log submitted secrets, codes, tokens, or PKCE verifiers.
+Multi-node deployments require a shared limiter design before these limits can provide deployment-wide enforcement.
+OAuth security logs include stable `event`, `outcome`, and `requestId` fields for registration, authorization, approval, and token exchange.
+Audit logs never include submitted client metadata bodies, approval secrets, authorization codes, access tokens, or PKCE verifiers.
 
 `approval = "auto"` immediately issues authorization codes after validation and is intended for private tests or temporary setup.
 Set `approval = "manual"` to require an explicit owner approval page before Levitate issues an authorization code.
@@ -348,16 +423,45 @@ file = "/path/to/SKILL.md"
 
 Levitate passes these instructions through the MCP server initialization result using the official TypeScript SDK `Server` `instructions` option.
 
-## Multi-backend Routing Model
+## Multi-backend Routing
 
-Levitate is intended to host multiple MCP backends by assigning each backend its own HTTP MCP endpoint:
+Levitate can host multiple MCP backends by assigning each backend its own HTTP MCP endpoint:
 
 - `/notes/mcp`
 - `/ingest/mcp`
 - `/tools/mcp`
 - `/example/mcp`
 
-Each endpoint should behave as an independent MCP server backed by one stdio MCP backend.
+Each endpoint behaves as an independent MCP server backed by one stdio MCP backend.
+
+```toml
+[server]
+name = "private-gateway"
+host = "127.0.0.1"
+port = 8787
+
+[backends.notes]
+mcp_path = "/notes/mcp"
+[backends.notes.stdio]
+command = "notes-mcp"
+[backends.notes.tools]
+deny = ["delete_note"]
+
+[backends.ingest]
+mcp_path = "/ingest/mcp"
+[backends.ingest.stdio]
+command = "ingest-mcp"
+```
+
+Named backends cannot be combined with legacy top-level `[stdio]` configuration.
+Backend paths must be unique and cannot overlap health, readiness, OAuth, or well-known routes.
+Policies, instructions, environment, process lifecycle, and readiness remain backend-specific.
+`GET /ready` succeeds only when every backend is ready and includes per-backend states.
+Startup failure closes every backend already started before Levitate exits.
+
+Static bearer and external OIDC authentication apply at gateway level across every backend.
+Current local Levitate authorization server and OAuth protected-resource metadata remain single-backend-only because each MCP endpoint requires distinct resource discovery and audience semantics.
+Configuration rejects those OAuth modes with multiple named backends rather than accepting tokens for an unintended route.
 
 Levitate does not merge multiple backend tool namespaces into a single `/mcp` endpoint by default.
 MCP already provides tool discovery through `tools/list`, so Levitate should preserve backend tool names and schemas unless an explicit policy filters or blocks them.

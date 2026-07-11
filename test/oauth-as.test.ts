@@ -39,6 +39,37 @@ const validVerifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234
 const otherValidVerifier = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
 
 describe("oauth authorization server facade", () => {
+  it("emits safe structured audit fields without raw registration metadata", async () => {
+    const entries: Record<string, unknown>[] = [];
+    const auditLogger: Logger = {
+      debug: () => {},
+      info: (_message, fields) => entries.push(fields ?? {}),
+      warn: (_message, fields) => entries.push(fields ?? {}),
+      error: () => {},
+    };
+    const context = await createTestApp({ logger: auditLogger });
+
+    await context.app.fetch(new Request("http://localhost/oauth/register", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-request-id": "audit-test",
+      },
+      body: JSON.stringify({
+        client_name: "sensitive-client-name",
+        redirect_uris: ["https://forbidden.example.com/callback"],
+      }),
+    }));
+
+    expect(entries).toContainEqual(expect.objectContaining({
+      event: "client_registration",
+      outcome: "rejected",
+      requestId: "audit-test",
+    }));
+    expect(JSON.stringify(entries)).not.toContain("sensitive-client-name");
+    expect(JSON.stringify(entries)).not.toContain("forbidden.example.com");
+  });
+
   it("serves authorization server metadata and jwks", async () => {
     const context = await createTestApp();
 
@@ -142,15 +173,13 @@ describe("oauth authorization server facade", () => {
     expect(client.token_endpoint_auth_method).toBe("none");
   });
 
-  it("normalizes ChatGPT public client registration grant metadata", async () => {
+  it("rejects unsupported refresh-token registration metadata", async () => {
     const context = await createTestApp();
     const response = await registerClient(context.app, {
       grant_types: ["authorization_code", "refresh_token"],
     });
-    const client = await response.json() as { grant_types: string[] };
-
-    expect(response.status).toBe(201);
-    expect(client.grant_types).toEqual(["authorization_code"]);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "invalid_client_metadata" });
   });
 
   it("lists, shows, and revokes clients with the management command", async () => {
@@ -389,8 +418,9 @@ describe("oauth authorization server facade", () => {
     expect(html).toContain("https://levitate.example.com/brain/mcp");
     expect(html).toContain("brain:read");
     expect(html).toContain("Approval secret");
-    expect(html).toContain("fa-solid fa-eye");
-    expect(html).toContain("fa-solid fa-eye-slash");
+    expect(html).toContain('id="eye_open"');
+    expect(html).toContain('id="eye_closed"');
+    expect(html).not.toContain("cdnjs.cloudflare.com");
     expect(html).toContain("Cancel");
     expect(html).not.toContain("state-1");
 
@@ -610,13 +640,14 @@ describe("oauth authorization server facade", () => {
 async function createTestApp(options: TestOptions = {}) {
   const context = createTestConfig(options);
   const keys = await loadAuthorizationServerKeys(context.config);
-  const oauthAuthorizationServer = createOAuthAuthorizationServer(context.config, keys, logger);
+  const appLogger = options.logger ?? logger;
+  const oauthAuthorizationServer = createOAuthAuthorizationServer(context.config, keys, appLogger);
   const authenticator = createAuthenticator(context.config, keys);
   const app = createApp({
     config: context.config,
     authenticator,
     backend,
-    logger,
+    logger: appLogger,
     oauthAuthorizationServer,
   });
 
@@ -634,6 +665,7 @@ interface TestOptions {
   approval?: "auto" | "manual";
   codeTtlSeconds?: number;
   dcrEnabled?: boolean;
+  logger?: Logger;
 }
 
 function createTestConfig(options: TestOptions = {}) {

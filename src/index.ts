@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createAuthenticator } from "./auth/index.js";
-import { getConfigPath, loadConfig } from "./config.js";
+import { getBackendConfigs, getConfigPath, loadConfig } from "./config.js";
 import { createLogger } from "./logging.js";
 import { StdioMcpBackend } from "./mcp/backend.js";
 import { loadInstructions } from "./mcp/instructions.js";
@@ -26,29 +26,64 @@ async function main(): Promise<void> {
     : undefined;
 
   const authenticator = createAuthenticator(config, authorizationServerKeys);
-  const instructions = await loadInstructions(config);
-  const backend = new StdioMcpBackend(config, logger);
+  const backendConfigs = getBackendConfigs(config);
+  const backends = await Promise.all(backendConfigs.map(async (backendConfig) => ({
+    config: backendConfig,
+    backend: new StdioMcpBackend(backendConfig, logger),
+    instructions: await loadInstructions(backendConfig),
+  })));
 
   logger.info("levitate starting", {
     name: config.server.name,
-    instructionsLoaded: Boolean(instructions),
+    backends: backendConfigs.map(({ id, mcp_path }) => ({ id, path: mcp_path })),
   });
 
-  await backend.start();
-  const server = startHttpServer({
-    config,
-    authenticator,
-    backend,
-    instructions,
-    logger,
-    oauthAuthorizationServer,
-  });
-
+  const startedBackends: StdioMcpBackend[] = [];
+  let server: ReturnType<typeof startHttpServer>;
+  try {
+    for (const runtime of backends) {
+      await runtime.backend.start();
+      startedBackends.push(runtime.backend);
+    }
+    server = startHttpServer({
+      config,
+      authenticator,
+      backends,
+      logger,
+      oauthAuthorizationServer,
+    });
+  } catch (error) {
+    await Promise.allSettled(startedBackends.map((backend) => backend.close()));
+    throw error;
+  }
+  let shuttingDown = false;
   const shutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.info("levitate stopping", { signal });
-    server.close();
-    await backend.close();
-    process.exit(0);
+    const httpClosed = new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+    const forceCloseTimer = setTimeout(() => {
+      logger.warn("forcing remaining http connections closed", { signal });
+      if ("closeAllConnections" in server) server.closeAllConnections();
+    }, 1_000);
+    forceCloseTimer.unref();
+    try {
+      await Promise.all([
+        httpClosed,
+        ...backends.map(({ backend }) => backend.close()),
+      ]);
+    } catch (error) {
+      logger.warn("shutdown error", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      clearTimeout(forceCloseTimer);
+      oauthAuthorizationServer?.close();
+      logger.info("levitate stopped", { signal });
+      process.exit(0);
+    }
   };
 
   process.on("SIGINT", () => void shutdown("SIGINT"));

@@ -9,7 +9,7 @@ import type {
 } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { BearerAuthenticator } from "../src/auth/bearer.js";
-import type { LevitateConfig } from "../src/config.js";
+import { getBackendConfigs, type LevitateConfig } from "../src/config.js";
 import type { Logger } from "../src/logging.js";
 import { StdioMcpBackend } from "../src/mcp/backend.js";
 import { createApp } from "../src/server.js";
@@ -111,6 +111,52 @@ describe("mcp endpoint", () => {
     backends.length = 0;
   });
 
+  it("reports liveness separately from backend readiness", async () => {
+    const unavailableBackend = {
+      ...backend,
+      isReady: () => false,
+    } as unknown as StdioMcpBackend;
+    const app = createApp({
+      config,
+      authenticator: new BearerAuthenticator("secret"),
+      backend: unavailableBackend,
+      logger,
+    });
+
+    const health = await app.fetch(new Request("http://localhost/health"));
+    const ready = await app.fetch(new Request("http://localhost/ready"));
+
+    expect(health.status).toBe(200);
+    await expect(health.json()).resolves.toEqual({ status: "ok", name: "test" });
+    expect(ready.status).toBe(503);
+    await expect(ready.json()).resolves.toEqual({
+      status: "not_ready",
+      name: "test",
+      backends: [{ id: "default", name: "test", path: "/mcp", ready: false }],
+    });
+  });
+
+  it("returns a validated request correlation ID", async () => {
+    const app = createApp({
+      config,
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const supplied = await app.fetch(new Request("http://localhost/health", {
+      headers: { "x-request-id": "test-request:123" },
+    }));
+    const rejected = await app.fetch(new Request("http://localhost/health", {
+      headers: { "x-request-id": "invalid request id" },
+    }));
+
+    expect(supplied.headers.get("x-request-id")).toBe("test-request:123");
+    expect(rejected.headers.get("x-request-id")).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  });
+
   it("requires bearer auth", async () => {
     const app = createApp({
       config,
@@ -151,6 +197,99 @@ describe("mcp endpoint", () => {
     }));
 
     expect(response.status).toBe(204);
+  });
+
+  it("permits all CORS origins by default", async () => {
+    const app = createApp({
+      config,
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request("http://localhost/mcp", {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://example.com",
+        "Access-Control-Request-Method": "POST",
+      },
+    }));
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  });
+
+  it("permits configured CORS origins exactly", async () => {
+    const app = createApp({
+      config: {
+        ...config,
+        server: {
+          ...config.server,
+          cors: { allowed_origins: ["https://chatgpt.com"] },
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request("http://localhost/mcp", {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://chatgpt.com",
+        "Access-Control-Request-Method": "POST",
+      },
+    }));
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(
+      "https://chatgpt.com",
+    );
+  });
+
+  it("omits CORS permission for disallowed origins", async () => {
+    const app = createApp({
+      config: {
+        ...config,
+        server: {
+          ...config.server,
+          cors: { allowed_origins: ["https://chatgpt.com"] },
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request("http://localhost/mcp", {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://example.com",
+        "Access-Control-Request-Method": "POST",
+      },
+    }));
+
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+
+  it("does not block clients without an Origin header", async () => {
+    const app = createApp({
+      config: {
+        ...config,
+        server: {
+          ...config.server,
+          cors: { allowed_origins: ["https://chatgpt.com"] },
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request("http://localhost/mcp"));
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
   });
 
   it("serves mcp at a custom path", async () => {
@@ -313,6 +452,46 @@ describe("mcp endpoint", () => {
     ]);
   });
 
+  it("isolates named backends by MCP path", async () => {
+    const namedBackend = (toolName: string) => ({
+      async listTools() {
+        return { tools: [{ name: toolName, inputSchema: { type: "object", properties: {} } }] };
+      },
+      async callTool() {
+        return { content: [{ type: "text", text: toolName }] };
+      },
+      isReady: () => true,
+    }) as unknown as StdioMcpBackend;
+    const backendConfig = (id: string, path: string) => ({
+      id,
+      name: id,
+      mcp_path: path,
+      stdio: { command: "unused", args: [] },
+      env: {},
+      instructions: {},
+      tools: { deny: [] },
+    });
+    const app = createApp({
+      config,
+      authenticator: new BearerAuthenticator("secret"),
+      backends: [
+        { config: backendConfig("notes", "/notes/mcp"), backend: namedBackend("notes_search") },
+        { config: backendConfig("ingest", "/ingest/mcp"), backend: namedBackend("ingest_sync") },
+      ],
+      logger,
+    });
+
+    for (const [path, expected] of [["/notes/mcp", "notes_search"], ["/ingest/mcp", "ingest_sync"]]) {
+      const client = new Client({ name: "test-client", version: "0.1.0" }, { capabilities: {} });
+      clients.push(client);
+      await client.connect(new StreamableHTTPClientTransport(new URL(`http://localhost${path}`), {
+        requestInit: { headers: { authorization: "Bearer secret" } },
+        fetch: async (input, init) => app.fetch(new Request(input, init)),
+      }));
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([expected]);
+    }
+  });
+
   it("proxies a real stdio backend and returns tool errors for denied direct calls", async () => {
     const stdioConfig: LevitateConfig = {
       ...config,
@@ -329,7 +508,7 @@ describe("mcp endpoint", () => {
         deny: ["fake_denied"],
       },
     };
-    const stdioBackend = new StdioMcpBackend(stdioConfig, logger);
+    const stdioBackend = new StdioMcpBackend(getBackendConfigs(stdioConfig)[0], logger);
     await stdioBackend.start();
     backends.push(stdioBackend);
 
