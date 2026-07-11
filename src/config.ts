@@ -14,6 +14,14 @@ const McpPathSchema = z.string().min(1).refine(
   "server.mcp_path must start with /",
 );
 
+const CorsOriginSchema = z.string().url().refine((value) => {
+  const url = new URL(value);
+  return (
+    (url.protocol === "http:" || url.protocol === "https:") &&
+    value === url.origin
+  );
+}, "server.cors.allowed_origins must contain HTTP(S) origins without paths");
+
 const HttpsUrlSchema = z.string().url().refine(
   (value) => new URL(value).protocol === "https:",
   "OIDC URLs must use https",
@@ -179,6 +187,9 @@ const ConfigSchema = z.object({
     port: z.coerce.number().int().positive().max(65535).default(8787),
     log_level: z.enum(["debug", "info", "warn", "error"]).default("info"),
     mcp_path: McpPathSchema.default("/mcp"),
+    cors: z.object({
+      allowed_origins: z.array(CorsOriginSchema).min(1),
+    }).optional(),
   }),
   stdio: z.object({
     command: z.string().min(1),

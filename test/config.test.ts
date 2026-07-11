@@ -24,10 +24,58 @@ deny = ["delete_note"]
 
     expect(config.server.name).toBe("brain");
     expect(config.server.mcp_path).toBe("/mcp");
+    expect(config.server.cors).toBeUndefined();
     expect(config.stdio.command).toBe("node");
     expect(config.auth.mode).toBe("bearer");
     expect(config.tools.allow).toEqual(["search"]);
     expect(config.tools.deny).toEqual(["delete_note"]);
+  });
+
+  it("parses allowed CORS origins", () => {
+    const config = parseConfigText(`
+[server]
+name = "brain"
+
+[server.cors]
+allowed_origins = ["https://chatgpt.com", "http://localhost:3000"]
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`);
+
+    expect(config.server.cors?.allowed_origins).toEqual([
+      "https://chatgpt.com",
+      "http://localhost:3000",
+    ]);
+  });
+
+  it("rejects malformed CORS origins", () => {
+    const parse = (origin: string) => parseConfigText(`
+[server]
+name = "brain"
+
+[server.cors]
+allowed_origins = ["${origin}"]
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`);
+
+    expect(() => parse("https://example.com/path")).toThrow(
+      "server.cors.allowed_origins must contain HTTP(S) origins without paths",
+    );
+    expect(() => parse("ftp://example.com")).toThrow(
+      "server.cors.allowed_origins must contain HTTP(S) origins without paths",
+    );
+    expect(() => parse("not-a-url")).toThrow();
   });
 
   it("parses a custom mcp path", () => {

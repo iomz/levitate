@@ -153,6 +153,99 @@ describe("mcp endpoint", () => {
     expect(response.status).toBe(204);
   });
 
+  it("permits all CORS origins by default", async () => {
+    const app = createApp({
+      config,
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request("http://localhost/mcp", {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://example.com",
+        "Access-Control-Request-Method": "POST",
+      },
+    }));
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  });
+
+  it("permits configured CORS origins exactly", async () => {
+    const app = createApp({
+      config: {
+        ...config,
+        server: {
+          ...config.server,
+          cors: { allowed_origins: ["https://chatgpt.com"] },
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request("http://localhost/mcp", {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://chatgpt.com",
+        "Access-Control-Request-Method": "POST",
+      },
+    }));
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(
+      "https://chatgpt.com",
+    );
+  });
+
+  it("omits CORS permission for disallowed origins", async () => {
+    const app = createApp({
+      config: {
+        ...config,
+        server: {
+          ...config.server,
+          cors: { allowed_origins: ["https://chatgpt.com"] },
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request("http://localhost/mcp", {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://example.com",
+        "Access-Control-Request-Method": "POST",
+      },
+    }));
+
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+
+  it("does not block clients without an Origin header", async () => {
+    const app = createApp({
+      config: {
+        ...config,
+        server: {
+          ...config.server,
+          cors: { allowed_origins: ["https://chatgpt.com"] },
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request("http://localhost/mcp"));
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+
   it("serves mcp at a custom path", async () => {
     const app = createApp({
       config: {

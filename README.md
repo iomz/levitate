@@ -122,6 +122,20 @@ The path must start with `/`.
 `GET /health` remains unchanged.
 This config does not enable multi-backend routing or backend aggregation.
 
+### CORS
+
+Levitate permits every browser origin by default for backward compatibility.
+Restrict browser access with an exact origin allowlist:
+
+```toml
+[server.cors]
+allowed_origins = ["https://chatgpt.com", "https://example.com"]
+```
+
+Origins must use HTTP or HTTPS and cannot contain paths, queries, or fragments.
+Requests without an `Origin` header remain available to non-browser MCP clients.
+CORS does not replace bearer authentication or OAuth validation.
+
 ## Auth Configuration
 
 ### Static bearer tokens

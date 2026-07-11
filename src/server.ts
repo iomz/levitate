@@ -21,9 +21,12 @@ export interface AppContext {
 
 export function createApp(context: AppContext): Hono {
   const app = new Hono();
+  const allowedOrigins = context.config.server.cors?.allowed_origins;
 
   app.use("*", cors({
-    origin: "*",
+    origin: allowedOrigins
+      ? (origin) => allowedOrigins.includes(origin) ? origin : undefined
+      : "*",
     allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
     allowHeaders: [
       "Authorization",
