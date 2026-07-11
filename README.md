@@ -310,6 +310,8 @@ Dynamic Client Registration accepts public clients only.
 Registered redirect URIs must be absolute HTTPS URLs and match `oauth.as.allowed_redirect_uri_prefixes`.
 Levitate does not issue client secrets.
 Authorization codes are short-lived, single-use, and stored in memory only.
+Pending approvals and authorization codes are pruned periodically and discarded on process exit.
+Cleanup timers do not keep Levitate running during shutdown.
 Registered clients persist in the JSON file configured by `oauth.as.client_store_file`.
 
 DCR is closed by default.

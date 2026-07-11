@@ -44,11 +44,15 @@ export class AuthorizationCodeStore {
     record.usedAt = Date.now();
   }
 
-  private pruneExpired(): void {
-    const now = Date.now();
+  pruneExpired(now = Date.now()): number {
+    let removed = 0;
     for (const [codeHash, record] of this.codes.entries()) {
-      if (record.expiresAt <= now) this.codes.delete(codeHash);
+      if (record.expiresAt <= now) {
+        this.codes.delete(codeHash);
+        removed += 1;
+      }
     }
+    return removed;
   }
 }
 

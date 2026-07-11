@@ -12,6 +12,7 @@ import { registerTokenRoute } from "./token-endpoint.js";
 
 export interface OAuthAuthorizationServer {
   registerRoutes(app: Hono<any>): void;
+  close(): void;
 }
 
 export function createOAuthAuthorizationServer(
@@ -29,6 +30,17 @@ export function createOAuthAuthorizationServer(
   const clients = new JsonClientStore(asConfig.client_store_file);
   const codes = new AuthorizationCodeStore();
   const pendingAuthorizations = new PendingAuthorizationStore();
+  const cleanupInterval = setInterval(() => {
+    const authorizationCodes = codes.pruneExpired();
+    const approvals = pendingAuthorizations.pruneExpired();
+    if (authorizationCodes || approvals) {
+      logger.debug("oauth ephemeral state pruned", {
+        authorizationCodes,
+        approvals,
+      });
+    }
+  }, Math.min(asConfig.authorization_code_ttl_seconds, 60) * 1000);
+  cleanupInterval.unref();
 
   return {
     registerRoutes(app: Hono<any>): void {
@@ -45,6 +57,11 @@ export function createOAuthAuthorizationServer(
         logger,
       );
       registerTokenRoute(app, config, keys, clients, codes, logger);
+    },
+    close(): void {
+      clearInterval(cleanupInterval);
+      codes.pruneExpired();
+      pendingAuthorizations.pruneExpired();
     },
   };
 }

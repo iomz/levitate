@@ -17,12 +17,12 @@ export class PendingAuthorizationStore {
   private readonly entries = new Map<string, PendingAuthorization>();
 
   create(entry: PendingAuthorization): void {
-    this.prune();
+    this.pruneExpired();
     this.entries.set(entry.id, entry);
   }
 
   get(id: string): PendingAuthorization | undefined {
-    this.prune();
+    this.pruneExpired();
     const entry = this.entries.get(id);
     if (!entry || entry.expiresAt <= Date.now()) return undefined;
     return entry;
@@ -34,11 +34,15 @@ export class PendingAuthorizationStore {
     return entry;
   }
 
-  private prune(): void {
-    const now = Date.now();
+  pruneExpired(now = Date.now()): number {
+    let removed = 0;
     for (const [id, entry] of this.entries) {
-      if (entry.expiresAt <= now) this.entries.delete(id);
+      if (entry.expiresAt <= now) {
+        this.entries.delete(id);
+        removed += 1;
+      }
     }
+    return removed;
   }
 }
 
@@ -336,4 +340,3 @@ function escapeHtml(value: string): string {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 }
-

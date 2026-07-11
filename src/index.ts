@@ -55,6 +55,7 @@ async function main(): Promise<void> {
       }),
       backend.close(),
     ]);
+    oauthAuthorizationServer?.close();
     logger.info("levitate stopped", { signal });
     process.exit(0);
   };
