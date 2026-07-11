@@ -4,6 +4,7 @@ import type { Logger } from "../../logging.js";
 import type { ClientStore } from "./store.js";
 import { validateRegistration, type RegisterRequest } from "./validation.js";
 import type { OAuthRateLimiter } from "./rate-limit.js";
+import { oauthAudit } from "./audit.js";
 
 export function registerClientRegistrationRoute(app: Hono, config: LevitateConfig, clients: ClientStore, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
   const asConfig = config.oauth.as;
@@ -11,7 +12,7 @@ export function registerClientRegistrationRoute(app: Hono, config: LevitateConfi
     const retryAfter = rateLimiter?.consume("registration", "global");
     if (retryAfter) {
       c.header("Retry-After", String(retryAfter));
-      logger.warn("oauth rate limit exceeded", { event: "client_registration", outcome: "rate_limited" });
+      logger.warn("oauth audit", oauthAudit(c, "client_registration", "rate_limited"));
       return c.json({ error: "temporarily_unavailable" }, 429);
     }
     if (!asConfig.dcr.enabled)
@@ -22,6 +23,7 @@ export function registerClientRegistrationRoute(app: Hono, config: LevitateConfi
       body = await c.req.json<RegisterRequest>();
     } catch {
       logger.warn("oauth client registration body rejected", {
+        ...oauthAudit(c, "client_registration", "rejected"),
         error: "invalid_client_metadata",
       });
       return c.json({ error: "invalid_client_metadata" }, 400);
@@ -30,8 +32,8 @@ export function registerClientRegistrationRoute(app: Hono, config: LevitateConfi
     const validationError = validateRegistration(body, config);
     if (validationError) {
       logger.warn("oauth client registration rejected", {
+        ...oauthAudit(c, "client_registration", "rejected"),
         error: validationError,
-        metadata: body,
       });
       return c.json({ error: validationError }, 400);
     }
@@ -49,6 +51,7 @@ export function registerClientRegistrationRoute(app: Hono, config: LevitateConfi
     });
 
     logger.info("oauth client registered", {
+      ...oauthAudit(c, "client_registration", "succeeded"),
       clientId: registered.client_id,
       redirectUriCount: registered.redirect_uris.length,
     });

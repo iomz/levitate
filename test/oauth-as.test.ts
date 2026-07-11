@@ -39,6 +39,37 @@ const validVerifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234
 const otherValidVerifier = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
 
 describe("oauth authorization server facade", () => {
+  it("emits safe structured audit fields without raw registration metadata", async () => {
+    const entries: Record<string, unknown>[] = [];
+    const auditLogger: Logger = {
+      debug: () => {},
+      info: (_message, fields) => entries.push(fields ?? {}),
+      warn: (_message, fields) => entries.push(fields ?? {}),
+      error: () => {},
+    };
+    const context = await createTestApp({ logger: auditLogger });
+
+    await context.app.fetch(new Request("http://localhost/oauth/register", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-request-id": "audit-test",
+      },
+      body: JSON.stringify({
+        client_name: "sensitive-client-name",
+        redirect_uris: ["https://forbidden.example.com/callback"],
+      }),
+    }));
+
+    expect(entries).toContainEqual(expect.objectContaining({
+      event: "client_registration",
+      outcome: "rejected",
+      requestId: "audit-test",
+    }));
+    expect(JSON.stringify(entries)).not.toContain("sensitive-client-name");
+    expect(JSON.stringify(entries)).not.toContain("forbidden.example.com");
+  });
+
   it("serves authorization server metadata and jwks", async () => {
     const context = await createTestApp();
 
@@ -610,13 +641,14 @@ describe("oauth authorization server facade", () => {
 async function createTestApp(options: TestOptions = {}) {
   const context = createTestConfig(options);
   const keys = await loadAuthorizationServerKeys(context.config);
-  const oauthAuthorizationServer = createOAuthAuthorizationServer(context.config, keys, logger);
+  const appLogger = options.logger ?? logger;
+  const oauthAuthorizationServer = createOAuthAuthorizationServer(context.config, keys, appLogger);
   const authenticator = createAuthenticator(context.config, keys);
   const app = createApp({
     config: context.config,
     authenticator,
     backend,
-    logger,
+    logger: appLogger,
     oauthAuthorizationServer,
   });
 
@@ -634,6 +666,7 @@ interface TestOptions {
   approval?: "auto" | "manual";
   codeTtlSeconds?: number;
   dcrEnabled?: boolean;
+  logger?: Logger;
 }
 
 function createTestConfig(options: TestOptions = {}) {

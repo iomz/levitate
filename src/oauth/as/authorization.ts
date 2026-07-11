@@ -7,6 +7,7 @@ import { AuthorizationCodeStore } from "./codes.js";
 import type { ClientStore } from "./store.js";
 import { isExactRegisteredRedirectUri, isValidPkceS256Challenge, parseRequestedScopes, stringFormValue } from "./validation.js";
 import type { OAuthRateLimiter } from "./rate-limit.js";
+import { oauthAudit } from "./audit.js";
 
 export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, clients: ClientStore, codes: AuthorizationCodeStore, pendingAuthorizations: PendingAuthorizationStore, approvalSecret: string | undefined, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
   const asConfig = config.oauth.as;
@@ -16,7 +17,7 @@ export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, c
     const retryAfter = rateLimiter?.consume("authorization", clientId ?? "unknown");
     if (retryAfter) {
       c.header("Retry-After", String(retryAfter));
-      logger.warn("oauth rate limit exceeded", { event: "authorization", outcome: "rate_limited", clientId });
+      logger.warn("oauth audit", { ...oauthAudit(c, "authorization", "rate_limited"), clientId });
       return c.json({ error: "temporarily_unavailable" }, 429);
     }
     const redirectUri = url.searchParams.get("redirect_uri");
@@ -25,6 +26,7 @@ export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, c
 
     const redirectError = (error: string) => {
       logger.warn("oauth authorization rejected", {
+        ...oauthAudit(c, "authorization", "rejected"),
         error,
         clientId,
         hasClient: Boolean(client),
@@ -56,6 +58,7 @@ export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, c
       !isExactRegisteredRedirectUri(client, redirectUri)
     ) {
       logger.warn("oauth authorization rejected", {
+        ...oauthAudit(c, "authorization", "rejected"),
         error: "invalid_request",
         clientId,
         hasClient: Boolean(client),
@@ -98,6 +101,7 @@ export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, c
     if (asConfig.approval === "manual") {
       pendingAuthorizations.create(pending);
       logger.info("oauth authorization pending approval", {
+        ...oauthAudit(c, "authorization", "pending"),
         clientId: pending.clientId,
         redirectOrigin: new URL(pending.redirectUri).origin,
         resource: pending.resource,
@@ -107,6 +111,7 @@ export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, c
     }
 
     logger.info("oauth authorization approved automatically", {
+      ...oauthAudit(c, "authorization", "approved"),
       clientId: pending.clientId,
       redirectOrigin: new URL(pending.redirectUri).origin,
       resource: pending.resource,
@@ -122,6 +127,7 @@ export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, c
     const pending = pendingAuthorizations.get(c.req.param("id"));
     if (!pending) return c.html(renderApprovalExpiredPage(), 404);
     logger.info("oauth approval page loaded", {
+      ...oauthAudit(c, "approval", "viewed"),
       clientId: pending.clientId,
     });
     return c.html(renderApprovalPage(pending));
@@ -133,7 +139,7 @@ export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, c
     const retryAfter = rateLimiter?.consume("approval", pending.clientId);
     if (retryAfter) {
       c.header("Retry-After", String(retryAfter));
-      logger.warn("oauth rate limit exceeded", { event: "approval", outcome: "rate_limited", clientId: pending.clientId });
+      logger.warn("oauth audit", { ...oauthAudit(c, "approval", "rate_limited"), clientId: pending.clientId });
       return c.json({ error: "temporarily_unavailable" }, 429);
     }
 
@@ -141,6 +147,7 @@ export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, c
     if (stringFormValue(form.decision) !== "approve") {
       pendingAuthorizations.consume(pending.id);
       logger.info("oauth authorization denied manually", {
+        ...oauthAudit(c, "approval", "denied"),
         clientId: pending.clientId,
       });
       const location = new URL(pending.redirectUri);
@@ -157,6 +164,7 @@ export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, c
       )
     ) {
       logger.warn("oauth approval secret rejected", {
+        ...oauthAudit(c, "approval", "rejected"),
         clientId: pending.clientId,
       });
       return c.html(
@@ -170,6 +178,7 @@ export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, c
     const client = await clients.get(pending.clientId);
     if (!client || client.revoked_at) {
       logger.info("oauth authorization rejected after approval", {
+        ...oauthAudit(c, "approval", "rejected"),
         clientId: pending.clientId,
       });
       const location = new URL(pending.redirectUri);
@@ -179,6 +188,7 @@ export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, c
     }
 
     logger.info("oauth authorization approved manually", {
+      ...oauthAudit(c, "approval", "approved"),
       clientId: pending.clientId,
       redirectOrigin: new URL(pending.redirectUri).origin,
       resource: pending.resource,

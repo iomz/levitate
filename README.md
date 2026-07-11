@@ -345,6 +345,8 @@ OAuth rate limits are optional and process-local.
 When configured, registration uses one gateway-wide bucket while authorization, token, and approval requests use client-specific buckets where a validated client identifier is available.
 Exceeded limits return `429` with `Retry-After` and do not log submitted secrets, codes, tokens, or PKCE verifiers.
 Multi-node deployments require a shared limiter design before these limits can provide deployment-wide enforcement.
+OAuth security logs include stable `event`, `outcome`, and `requestId` fields for registration, authorization, approval, and token exchange.
+Audit logs never include submitted client metadata bodies, approval secrets, authorization codes, access tokens, or PKCE verifiers.
 
 `approval = "auto"` immediately issues authorization codes after validation and is intended for private tests or temporary setup.
 Set `approval = "manual"` to require an explicit owner approval page before Levitate issues an authorization code.

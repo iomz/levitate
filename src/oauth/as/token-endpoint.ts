@@ -7,6 +7,7 @@ import type { ClientStore } from "./store.js";
 import { issueAccessToken } from "./tokens.js";
 import { isValidPkceVerifier, stringFormValue } from "./validation.js";
 import type { OAuthRateLimiter } from "./rate-limit.js";
+import { oauthAudit } from "./audit.js";
 
 export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: AuthorizationServerKeys, clients: ClientStore, codes: AuthorizationCodeStore, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
   const asConfig = config.oauth.as;
@@ -19,7 +20,7 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
     const retryAfter = rateLimiter?.consume("token", clientId ?? "unknown");
     if (retryAfter) {
       c.header("Retry-After", String(retryAfter));
-      logger.warn("oauth rate limit exceeded", { event: "token", outcome: "rate_limited", clientId });
+      logger.warn("oauth audit", { ...oauthAudit(c, "token_exchange", "rate_limited"), clientId });
       return c.json({ error: "temporarily_unavailable" }, 429);
     }
     const codeVerifier = stringFormValue(form.code_verifier);
@@ -29,6 +30,7 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
       return c.json({ error: "unsupported_grant_type" }, 400);
     if (!code || !redirectUri || !clientId || !codeVerifier || !resource) {
       logger.warn("oauth token request rejected", {
+        ...oauthAudit(c, "token_exchange", "rejected"),
         error: "invalid_request",
         grantType,
         hasCode: Boolean(code),
@@ -43,6 +45,7 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
     const client = await clients.get(clientId);
     if (!client || client.revoked_at) {
       logger.warn("oauth token request rejected", {
+        ...oauthAudit(c, "token_exchange", "rejected"),
         error: "invalid_client",
         clientId,
         hasClient: Boolean(client),
@@ -59,7 +62,10 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
         error instanceof Error
           ? error.message
           : "invalid authorization code";
-      logger.warn("oauth token code rejected", { message });
+      logger.warn("oauth token code rejected", {
+        ...oauthAudit(c, "token_exchange", "rejected"),
+        message,
+      });
       return c.json({ error: "invalid_grant" }, 400);
     }
 
@@ -71,6 +77,7 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
       !verifyPkceS256(codeVerifier, record.codeChallenge)
     ) {
       logger.warn("oauth token request rejected", {
+        ...oauthAudit(c, "token_exchange", "rejected"),
         error: "invalid_grant",
         clientId,
         codeClientId: record.clientId,
@@ -93,6 +100,12 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
       config,
       keys,
     );
+
+    logger.info("oauth audit", {
+      ...oauthAudit(c, "token_exchange", "succeeded"),
+      clientId,
+      scopes: record.scopes,
+    });
 
     return c.json({
       access_token: accessToken,
