@@ -44,7 +44,8 @@ Levitate requires authentication for the MCP endpoint.
 Static bearer tokens are available for local/dev/simple deployments.
 OIDC/JWT validation is available for Auth0 and other RS256 JWKS-backed issuers.
 MCP servers can read or modify private data, and tunnel-published endpoints are public unless protected.
-`GET /health` is unauthenticated for deployment checks; the MCP endpoint requires `Authorization: Bearer <token>`.
+`GET /health` reports process liveness and `GET /ready` reports stdio backend readiness.
+Both endpoints are unauthenticated for deployment checks; the MCP endpoint requires `Authorization: Bearer <token>`.
 
 ## Quick Start
 
@@ -77,6 +78,12 @@ Health check:
 
 ```sh
 curl http://127.0.0.1:8787/health
+```
+
+Readiness check:
+
+```sh
+curl http://127.0.0.1:8787/ready
 ```
 
 Authenticated MCP clients must send:

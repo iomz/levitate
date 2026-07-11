@@ -44,10 +44,18 @@ async function main(): Promise<void> {
     oauthAuthorizationServer,
   });
 
+  let shuttingDown = false;
   const shutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.info("levitate stopping", { signal });
-    server.close();
-    await backend.close();
+    await Promise.all([
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      }),
+      backend.close(),
+    ]);
+    logger.info("levitate stopped", { signal });
     process.exit(0);
   };
 

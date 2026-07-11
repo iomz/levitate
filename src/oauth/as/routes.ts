@@ -11,7 +11,7 @@ import { registerClientRegistrationRoute } from "./registration.js";
 import { registerTokenRoute } from "./token-endpoint.js";
 
 export interface OAuthAuthorizationServer {
-  registerRoutes(app: Hono): void;
+  registerRoutes(app: Hono<any>): void;
 }
 
 export function createOAuthAuthorizationServer(
@@ -31,7 +31,7 @@ export function createOAuthAuthorizationServer(
   const pendingAuthorizations = new PendingAuthorizationStore();
 
   return {
-    registerRoutes(app: Hono): void {
+    registerRoutes(app: Hono<any>): void {
       registerMetadataRoutes(app, config, keys);
       registerClientRegistrationRoute(app, config, clients, logger);
 

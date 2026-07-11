@@ -111,6 +111,51 @@ describe("mcp endpoint", () => {
     backends.length = 0;
   });
 
+  it("reports liveness separately from backend readiness", async () => {
+    const unavailableBackend = {
+      ...backend,
+      isReady: () => false,
+    } as unknown as StdioMcpBackend;
+    const app = createApp({
+      config,
+      authenticator: new BearerAuthenticator("secret"),
+      backend: unavailableBackend,
+      logger,
+    });
+
+    const health = await app.fetch(new Request("http://localhost/health"));
+    const ready = await app.fetch(new Request("http://localhost/ready"));
+
+    expect(health.status).toBe(200);
+    await expect(health.json()).resolves.toEqual({ status: "ok", name: "test" });
+    expect(ready.status).toBe(503);
+    await expect(ready.json()).resolves.toEqual({
+      status: "not_ready",
+      name: "test",
+    });
+  });
+
+  it("returns a validated request correlation ID", async () => {
+    const app = createApp({
+      config,
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const supplied = await app.fetch(new Request("http://localhost/health", {
+      headers: { "x-request-id": "test-request:123" },
+    }));
+    const rejected = await app.fetch(new Request("http://localhost/health", {
+      headers: { "x-request-id": "invalid request id" },
+    }));
+
+    expect(supplied.headers.get("x-request-id")).toBe("test-request:123");
+    expect(rejected.headers.get("x-request-id")).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  });
+
   it("requires bearer auth", async () => {
     const app = createApp({
       config,
