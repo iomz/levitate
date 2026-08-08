@@ -28,6 +28,19 @@ mode = "bearer"
 token_env = "LEVITATE_TOKEN"
 `)).toThrow("backend mcp_path is reserved: /health");
   });
+
+  it("reserves the public asset namespace", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "gateway"
+mcp_path = "/assets/levitate-icon-64.png"
+[stdio]
+command = "node"
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`)).toThrow("backend mcp_path is reserved: /assets/levitate-icon-64.png");
+  });
   it("normalizes named multi-backend configuration", () => {
     const config = parseConfigText(`
 [server]

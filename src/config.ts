@@ -292,13 +292,13 @@ const ConfigSchema = z.object({
     context.addIssue({ code: z.ZodIssueCode.custom, message: "backend mcp_path values must be unique", path: ["backends"] });
   }
   for (const path of paths) {
-    if (["/health", "/ready"].includes(path) || path.startsWith("/oauth") || path.startsWith("/.well-known")) {
+    if (isReservedMcpPath(path)) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: `backend mcp_path is reserved: ${path}`, path: ["backends"] });
     }
   }
   if (value.stdio) {
     const path = value.server.mcp_path;
-    if (["/health", "/ready"].includes(path) || path.startsWith("/oauth") || path.startsWith("/.well-known")) {
+    if (isReservedMcpPath(path)) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: `backend mcp_path is reserved: ${path}`, path: ["server", "mcp_path"] });
     }
   }
@@ -351,6 +351,13 @@ const ConfigSchema = z.object({
     }
   }
 });
+
+function isReservedMcpPath(path: string): boolean {
+  return ["/health", "/ready"].includes(path) ||
+    path.startsWith("/assets") ||
+    path.startsWith("/oauth") ||
+    path.startsWith("/.well-known");
+}
 
 export type LevitateConfig = z.infer<typeof ConfigSchema>;
 export type AuthConfig = LevitateConfig["auth"];

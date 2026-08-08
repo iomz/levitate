@@ -404,9 +404,10 @@ See [`config/oauth-gateway.example.toml`](config/oauth-gateway.example.toml) for
 ### Install a Levitate endpoint in ChatGPT
 
 ChatGPT UI labels can change independently of Levitate.
-These steps were verified in ChatGPT developer mode on 2026-08-09; also check OpenAI's current [connection guide](https://developers.openai.com/plugins/deploy/connect-chatgpt).
+These steps were verified in ChatGPT developer mode on 2026-08-09 in Asia/Tokyo (2026-08-08 UTC); also check OpenAI's current [connection guide](https://developers.openai.com/plugins/deploy/connect-chatgpt).
 
-Before installing an endpoint, enable ChatGPT developer mode and confirm that Levitate is reachable through public HTTPS.
+Before installing an endpoint, enable ChatGPT developer mode under **Settings > Security and login** and confirm that Levitate is reachable through public HTTPS.
+Some ChatGPT builds also expose the Developer mode setting under **Settings > Plugins**.
 Create one ChatGPT plugin entry for each named MCP endpoint that should appear separately in ChatGPT.
 
 1. Open the plugin browser from **Plugins** in the ChatGPT sidebar, or use **Settings > Plugins > Browse plugins**.
@@ -419,7 +420,7 @@ Create one ChatGPT plugin entry for each named MCP endpoint that should appear s
    | Name | Any clear per-endpoint name, such as `Levitate/Notes` or `Levitate/Admin`. |
    | Description | Optional. |
    | Connection | Select **Server URL** and enter the full MCP endpoint, such as `https://levitate.example.com/notes/mcp`. |
-   | Authentication | Select **OAuth**. Streamable HTTP is not an authentication option in the current dialog. |
+   | Authentication | In the verified ChatGPT dialog, select **OAuth**. OpenAI's connection guide does not show this selector, but Levitate requires OAuth discovery. Streamable HTTP is not an authentication option. |
 
 4. Review the warning for a custom MCP server, then check **I understand and want to continue**.
 5. Select **Create**.
@@ -758,6 +759,8 @@ Levitate uses the official `@modelcontextprotocol/sdk` v1 Streamable HTTP implem
 
 The remote endpoint defaults to `/mcp` and uses JSON responses from Streamable HTTP for straightforward request/response behavior.
 Deployments can change the endpoint path with `server.mcp_path`.
+During MCP initialization, Levitate advertises a human-readable title, description, project website, and its 64x64 PNG icon through `serverInfo`.
+The icon is available without authentication at `/assets/levitate-icon-64.png`; clients decide whether and where to display this metadata.
 Compatibility should be validated against each target remote MCP host because Claude, ChatGPT, and other hosts may differ in connector rollout details.
 
 ## Non-Goals

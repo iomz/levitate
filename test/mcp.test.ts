@@ -204,6 +204,24 @@ describe("mcp endpoint", () => {
     expect(response.status).toBe(204);
   });
 
+  it("serves the public Levitate server icon", async () => {
+    const app = createApp({
+      config,
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request(
+      "http://localhost/assets/levitate-icon-64.png",
+    ));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=3600");
+    expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
+  });
+
   it("permits all CORS origins by default", async () => {
     const app = createApp({
       config,
@@ -551,6 +569,19 @@ describe("mcp endpoint", () => {
       },
     );
     await client.connect(transport);
+
+    expect(client.getServerVersion()).toEqual({
+      name: "test",
+      title: "Levitate / test",
+      version: "0.1.0",
+      description: "MCP endpoint exposed through Levitate.",
+      websiteUrl: "https://github.com/iomz/levitate",
+      icons: [{
+        src: "http://localhost/assets/levitate-icon-64.png",
+        mimeType: "image/png",
+        sizes: ["64x64"],
+      }],
+    });
 
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name)).toEqual(["search"]);
