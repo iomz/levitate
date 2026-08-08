@@ -10,6 +10,7 @@ import { registerMetadataRoutes } from "./metadata.js";
 import { registerClientRegistrationRoute } from "./registration.js";
 import { registerTokenRoute } from "./token-endpoint.js";
 import { OAuthRateLimiter } from "./rate-limit.js";
+import { CimdClientResolver, CompositeClientLookup } from "./cimd.js";
 
 export interface OAuthAuthorizationServer {
   registerRoutes(app: Hono<any>): void;
@@ -20,6 +21,7 @@ export function createOAuthAuthorizationServer(
   config: LevitateConfig,
   keys: AuthorizationServerKeys,
   logger: Logger,
+  fetchImpl: typeof fetch = fetch,
 ): OAuthAuthorizationServer | undefined {
   const asConfig = config.oauth.as;
   if (!asConfig.enabled) return undefined;
@@ -28,7 +30,11 @@ export function createOAuthAuthorizationServer(
   }
   const approvalSecret = getApprovalSecret(config);
 
-  const clients = new JsonClientStore(asConfig.client_store_file);
+  const registeredClients = new JsonClientStore(asConfig.client_store_file);
+  const cimdClients = asConfig.cimd.enabled
+    ? new CimdClientResolver(config, logger, fetchImpl)
+    : undefined;
+  const clients = new CompositeClientLookup(registeredClients, cimdClients);
   const codes = new AuthorizationCodeStore();
   const pendingAuthorizations = new PendingAuthorizationStore();
   const rateLimitConfig = asConfig.rate_limits;
@@ -50,7 +56,7 @@ export function createOAuthAuthorizationServer(
   return {
     registerRoutes(app: Hono<any>): void {
       registerMetadataRoutes(app, config, keys);
-      registerClientRegistrationRoute(app, config, clients, logger, rateLimiter);
+      registerClientRegistrationRoute(app, config, registeredClients, logger, rateLimiter);
 
       registerAuthorizationRoutes(
         app,

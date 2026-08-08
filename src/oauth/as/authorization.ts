@@ -4,18 +4,26 @@ import type { LevitateConfig } from "../../config.js";
 import type { Logger } from "../../logging.js";
 import { getApprovalSecret, isApprovalSecretValid, PendingAuthorizationStore, renderApprovalExpiredPage, renderApprovalPage, type PendingAuthorization } from "./approval.js";
 import { AuthorizationCodeStore } from "./codes.js";
-import type { ClientStore } from "./store.js";
+import type { ClientLookup } from "./store.js";
 import { isExactRegisteredRedirectUri, isValidPkceS256Challenge, parseRequestedScopes, stringFormValue } from "./validation.js";
 import type { OAuthRateLimiter } from "./rate-limit.js";
 import { oauthAudit } from "./audit.js";
 
-export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, clients: ClientStore, codes: AuthorizationCodeStore, pendingAuthorizations: PendingAuthorizationStore, approvalSecret: string | undefined, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
+export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, clients: ClientLookup, codes: AuthorizationCodeStore, pendingAuthorizations: PendingAuthorizationStore, approvalSecret: string | undefined, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
   const asConfig = config.oauth.as;
   app.get("/oauth/authorize", async (c) => {
     const url = new URL(c.req.url);
     const clientId = url.searchParams.get("client_id");
     const redirectUri = url.searchParams.get("redirect_uri");
     const state = url.searchParams.get("state") ?? undefined;
+    const retryAfter = clientId
+      ? rateLimiter?.consume("authorization", clientId)
+      : undefined;
+    if (retryAfter) {
+      c.header("Retry-After", String(retryAfter));
+      logger.warn("oauth audit", { ...oauthAudit(c, "authorization", "rate_limited"), clientId });
+      return c.json({ error: "temporarily_unavailable" }, 429);
+    }
     const client = clientId ? await clients.get(clientId) : undefined;
 
     const redirectError = (error: string) => {
@@ -47,12 +55,6 @@ export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, c
       return redirectError("unsupported_response_type");
     if (!client || client.revoked_at)
       return redirectError("invalid_client");
-    const retryAfter = rateLimiter?.consume("authorization", client.client_id);
-    if (retryAfter) {
-      c.header("Retry-After", String(retryAfter));
-      logger.warn("oauth audit", { ...oauthAudit(c, "authorization", "rate_limited"), clientId });
-      return c.json({ error: "temporarily_unavailable" }, 429);
-    }
     if (
       !redirectUri ||
       !isExactRegisteredRedirectUri(client, redirectUri)

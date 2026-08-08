@@ -37,6 +37,10 @@ client_store_file = "state/oauth-clients.json"
 [oauth.as.dcr]
 enabled = false
 
+[oauth.as.cimd]
+enabled = true
+allowed_client_id_prefixes = ["https://chatgpt.com/"]
+
 [oauth.as.keys]
 private_key_file = "state/oauth-private-key.pem"
 key_id = "example-local-1"

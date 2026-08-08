@@ -1,6 +1,6 @@
 import { serve } from "@hono/node-server";
 import { randomUUID } from "node:crypto";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import type { ServerType } from "@hono/node-server";
 import type { Authenticator } from "./auth/types.js";
@@ -88,7 +88,7 @@ export function createApp(context: AppContext): Hono<AppEnv> {
   });
 
   if (context.config.oauth.resource.enabled) {
-    app.get("/.well-known/oauth-protected-resource", (c) => {
+    const serveProtectedResourceMetadata = (c: Context<AppEnv>) => {
       const resource = context.config.oauth.resource;
       return c.json({
         resource: resource.resource,
@@ -96,7 +96,12 @@ export function createApp(context: AppContext): Hono<AppEnv> {
         bearer_methods_supported: ["header"],
         scopes_supported: resource.scopes_supported,
       });
-    });
+    };
+    app.get("/.well-known/oauth-protected-resource", serveProtectedResourceMetadata);
+    const pathScopedRoute = getPathScopedResourceMetadataPath(context.config);
+    if (pathScopedRoute !== "/.well-known/oauth-protected-resource") {
+      app.get(pathScopedRoute, serveProtectedResourceMetadata);
+    }
   }
 
   context.oauthAuthorizationServer?.registerRoutes(app);
@@ -162,5 +167,18 @@ function getResourceMetadataUrl(config: LevitateConfig): string | undefined {
   const resource = config.oauth.resource;
   if (!resource.enabled || !resource.resource) return undefined;
   if (resource.metadata_url) return resource.metadata_url;
-  return new URL("/.well-known/oauth-protected-resource", resource.resource).toString();
+  const url = new URL(resource.resource);
+  url.pathname = getPathScopedResourceMetadataPath(config);
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+function getPathScopedResourceMetadataPath(config: LevitateConfig): string {
+  const resourceUrl = config.oauth.resource.resource;
+  if (!resourceUrl) return "/.well-known/oauth-protected-resource";
+  const resourcePath = new URL(resourceUrl).pathname.replace(/^\/+|\/+$/g, "");
+  return resourcePath
+    ? `/.well-known/oauth-protected-resource/${resourcePath}`
+    : "/.well-known/oauth-protected-resource";
 }

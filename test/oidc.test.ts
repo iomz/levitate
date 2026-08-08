@@ -61,6 +61,10 @@ const config: LevitateConfig = {
       dcr: {
         enabled: false,
       },
+      cimd: {
+        enabled: false,
+        allowed_client_id_prefixes: [],
+      },
       allowed_redirect_uri_prefixes: [],
       scopes_supported: [],
       default_scopes: [],
