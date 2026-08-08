@@ -13,11 +13,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License"></a>
 </p>
 
-Levitate runs near local tools, launches one configured stdio MCP server, connects as an MCP client, then exposes a Streamable HTTP endpoint for Claude, ChatGPT, and other remote MCP hosts.
-
-The project is **Levitate**. The package, CLI, Docker image, and binary artifact are `levitate`.
-
-Initial target flow:
+Levitate runs near local tools, launches one or more configured stdio MCP servers, connects as an MCP client, then exposes Streamable HTTP endpoints for Claude, ChatGPT, and other remote MCP hosts.
 
 ```text
 Claude.ai / ChatGPT
@@ -28,25 +24,36 @@ Claude.ai / ChatGPT
 ```
 
 Levitate is backend-agnostic.
-Any stdio MCP server can be exposed through its HTTP endpoint, subject to auth and policy.
+Any stdio MCP server can be exposed through its own HTTP endpoint, subject to gateway authentication and backend-specific policy.
+Package, CLI, Docker image, and binary artifact are named `levitate`.
 
-## Why Promotion Exists
+## Why Levitate
 
-Many useful MCP servers are local stdio servers.
-They work with Claude Desktop, Claude Code, Cursor, and other local MCP hosts, but cloud-hosted AI apps cannot connect to them directly.
-Levitate promotes those local capabilities into a remote MCP endpoint while keeping policy and auth at the gateway.
+Many useful MCP servers expose only local stdio transport.
+They work with Claude Desktop, Claude Code, Cursor, and other local MCP hosts, but cloud-hosted AI apps cannot connect directly.
+Levitate promotes those capabilities into remote MCP endpoints while keeping authentication and policy at the gateway.
+
+## Documentation
+
+- [Authentication](AUTHENTICATION.md): bearer, OIDC, protected-resource metadata, local OAuth, CIMD/DCR, gateway identity, and credential operations
+- [Testing](TESTING.md): automated validation and MCP Inspector smoke tests
+- [`config/`](config): copyable deployment examples
 
 ## Security
 
 Do not expose private local tools without authentication.
 
-Levitate requires authentication for the MCP endpoint.
-Static bearer tokens are available for local/dev/simple deployments.
-OIDC/JWT validation is available for Auth0 and other RS256 JWKS-backed issuers.
+Levitate requires authentication for MCP endpoints.
+Static bearer tokens support local and simple deployments.
+OIDC/JWT validation supports Auth0 and other RS256 JWKS-backed issuers.
+Levitate can also issue gateway tokens through its local OAuth server for private ChatGPT-compatible deployments.
+
 MCP servers can read or modify private data, and tunnel-published endpoints are public unless protected.
 `GET /health` reports process liveness and `GET /ready` reports backend readiness.
-Both endpoints are unauthenticated for deployment checks; the MCP endpoint requires `Authorization: Bearer <token>`.
+Both endpoints are unauthenticated for deployment checks; MCP endpoints require bearer authentication.
 Shutdown stops accepting HTTP traffic, gives existing connections one second to close, then force-closes persistent connections before exiting.
+
+See [Authentication](AUTHENTICATION.md) before publishing Levitate through a tunnel or reverse proxy.
 
 ## Quick Start
 
@@ -56,35 +63,25 @@ Install dependencies:
 pnpm install
 ```
 
-Set a bearer token:
+Set a bearer token and start the deterministic fake backend:
 
 ```sh
 export LEVITATE_TOKEN="$(openssl rand -hex 32)"
-```
-
-Start `levitate` with the fake stdio backend profile:
-
-```sh
 pnpm build
 pnpm start -- --config config/fake-stdio.toml
 ```
 
-MCP endpoint:
+The fake profile listens on port `8790`:
 
 ```text
 http://127.0.0.1:8790/mcp
 ```
 
-Health check:
+Check process and backend:
 
 ```sh
-curl http://127.0.0.1:8787/health
-```
-
-Readiness check:
-
-```sh
-curl http://127.0.0.1:8787/ready
+curl http://127.0.0.1:8790/health
+curl http://127.0.0.1:8790/ready
 ```
 
 Authenticated MCP clients must send:
@@ -93,38 +90,19 @@ Authenticated MCP clients must send:
 Authorization: Bearer <LEVITATE_TOKEN>
 ```
 
-## Example Backend Profile
+See [Testing](TESTING.md) for MCP Inspector commands and expected results.
 
-`config/fake-stdio.toml` shows one deterministic local profile for the fake stdio test backend:
+## Configuration
 
-```toml
-[server]
-name = "fake"
-host = "127.0.0.1"
-port = 8790
-mcp_path = "/mcp"
-
-[stdio]
-command = "node"
-args = ["test/fixtures/fake-stdio-server.mjs"]
-
-[auth]
-mode = "bearer"
-token_env = "LEVITATE_TOKEN"
-```
-
-Real deployments can point `[stdio]` at any stdio MCP server and then use tool policy to filter or block exposed tools.
-
-## Configuration Examples
-
-Choose smallest example matching deployment:
+Choose the smallest example matching the deployment:
 
 | Use case | Example | Notes |
 | --- | --- | --- |
 | Static bearer token | [`config/bearer.example.toml`](config/bearer.example.toml) | Small local, private, or manually managed deployment |
 | External OIDC/JWT | [`config/oidc.example.toml`](config/oidc.example.toml) | Auth0 or another RS256 JWKS-backed provider |
-| Local OAuth AS | [`config/oauth-as.example.toml`](config/oauth-as.example.toml) | ChatGPT Custom MCP with DCR, PKCE, manual owner approval, and local JWT issuance |
-| Multiple backends | [`config/multi-backend.example.toml`](config/multi-backend.example.toml) | Independent routes, processes, instructions, and tool policies behind shared auth |
+| Local OAuth server | [`config/oauth-as.example.toml`](config/oauth-as.example.toml) | ChatGPT with CIMD/DCR, PKCE, manual approval, and local JWT issuance |
+| Gateway-wide OAuth | [`config/oauth-gateway.example.toml`](config/oauth-gateway.example.toml) | One OAuth identity shared by multiple named backends |
+| Multiple backends | [`config/multi-backend.example.toml`](config/multi-backend.example.toml) | Independent routes, processes, instructions, and tool policies behind shared authentication |
 
 Copy an example to an ignored local file before adding machine paths or deployment values:
 
@@ -134,12 +112,12 @@ cp config/bearer.example.toml config/bearer.local.toml
 
 Example files contain no secrets.
 Prefer environment variables for bearer tokens and approval secrets.
-Use absolute state/key paths when Levitate runs under a service manager with a different working directory.
+Use absolute state and key paths when Levitate runs under a service manager with a different working directory.
 
-## Server Configuration
+### Server endpoint
 
 The MCP endpoint defaults to `/mcp`.
-Set `server.mcp_path` to expose the single configured backend at another path:
+Set `server.mcp_path` to expose a single backend at another path:
 
 ```toml
 [server]
@@ -149,7 +127,7 @@ mcp_path = "/brain/mcp"
 
 The path must start with `/`.
 `GET /health` remains unchanged.
-This config does not enable multi-backend routing or backend aggregation.
+This setting alone does not enable multi-backend routing or backend aggregation.
 
 ### CORS
 
@@ -165,341 +143,23 @@ Origins must use HTTP or HTTPS and cannot contain paths, queries, or fragments.
 Requests without an `Origin` header remain available to non-browser MCP clients.
 CORS does not replace bearer authentication or OAuth validation.
 
-## Auth Configuration
+### Authentication
 
-### Static bearer tokens
+Authentication applies at the gateway level.
+Supported modes:
 
-Static bearer mode reads a token from config or an environment variable:
+- static bearer token
+- external OIDC/JWT validation
+- Levitate-issued OAuth tokens
 
-```toml
-[auth]
-mode = "bearer"
-token_env = "LEVITATE_TOKEN"
-```
-
-Authenticated clients must send:
-
-```text
-Authorization: Bearer <LEVITATE_TOKEN>
-```
-
-### OIDC/JWT validation
-
-OIDC mode validates incoming bearer JWTs against the configured issuer, audience, expiration, and JWKS signature:
-
-```toml
-[auth]
-mode = "oidc"
-issuer = "https://YOUR_TENANT.auth0.com/"
-audience = "https://levitate.example.com"
-jwks_uri = "https://YOUR_TENANT.auth0.com/.well-known/jwks.json"
-```
-
-`jwks_uri` is optional when the issuer's standard `/.well-known/jwks.json` path is correct.
-
-Auth0 setup:
-
-- Create an Auth0 Machine to Machine application for clients that need tokens.
-- Create an Auth0 API with identifier `https://levitate.example.com`.
-- Use RS256 signing.
-- Configure Levitate with issuer `https://YOUR_TENANT.auth0.com/` and audience `https://levitate.example.com`.
-
-Levitate only needs issuer, audience, and optionally JWKS URI to validate incoming tokens.
-Auth0 client credentials are for clients or smoke scripts that obtain tokens; do not store client secrets in Levitate config.
-
-Manual token acquisition for local smoke tests can use environment variables:
-
-```sh
-export AUTH0_DOMAIN=YOUR_TENANT.auth0.com
-export AUTH0_AUDIENCE=https://levitate.example.com
-export AUTH0_CLIENT_ID=...
-export AUTH0_CLIENT_SECRET=...
-```
-
-Then request a token from:
-
-```text
-https://${AUTH0_DOMAIN}/oauth/token
-```
-
-### OAuth protected resource metadata
-
-Levitate can serve OAuth protected resource metadata for remote MCP hosts that discover authorization details from the resource server:
-
-```toml
-[oauth.resource]
-enabled = true
-mode = "service"
-resource = "https://levitate.example.com/brain/mcp"
-authorization_servers = ["https://auth.example.com/"]
-scopes_supported = ["levitate:read", "levitate:call"]
-```
-
-When enabled, Levitate serves:
-
-```text
-GET /.well-known/oauth-protected-resource
-GET /.well-known/oauth-protected-resource/brain/mcp
-```
-
-The path-scoped route follows the configured public resource path; the root route remains available for compatibility.
-Both responses include the configured resource URL, authorization server list, `bearer_methods_supported = ["header"]`, and configured scopes.
-`resource` is the canonical public MCP endpoint URL and must be configured explicitly.
-Levitate does not derive it from issuer, audience, request host, or local bind address.
-
-Unauthenticated or invalid-auth MCP requests keep the generic JSON body:
-
-```json
-{ "error": "auth failed" }
-```
-
-When protected resource metadata is enabled, the same `401` response includes:
-
-```http
-WWW-Authenticate: Bearer resource_metadata="https://levitate.example.com/.well-known/oauth-protected-resource/brain/mcp"
-```
-
-By default, Levitate derives that path-scoped metadata URL from the configured resource URL.
-Set `oauth.resource.metadata_url` only when the public metadata URL needs an explicit override.
-`mode = "service"` is the default and binds the resource identity to one canonical MCP endpoint.
-Gateway mode derives one metadata URL per backend and therefore rejects this single-URL override.
-
-### Local OAuth authorization server facade
-
-Levitate can run a private local OAuth authorization server facade for ChatGPT Custom MCP registration.
-This exposes discovery, Client ID Metadata Document (CIMD) resolution, optional Dynamic Client Registration, authorization-code with PKCE, token issuance, and JWKS endpoints through the same HTTP server.
-Use this only for private deployments that still require authenticated MCP requests.
-Do not expose private local tools without auth and strict redirect URI configuration.
-
-Example:
-
-```toml
-[server]
-mcp_path = "/brain/mcp"
-
-[oauth.resource]
-enabled = true
-resource = "https://levitate.example.com/brain/mcp"
-authorization_servers = ["https://levitate.example.com"]
-scopes_supported = ["brain:read", "brain:write"]
-
-[oauth.as]
-enabled = true
-issuer = "https://levitate.example.com"
-subject = "local-user"
-approval = "auto"
-approval_secret_env = "LEVITATE_APPROVAL_SECRET"
-allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
-scopes_supported = ["brain:read", "brain:write"]
-default_scopes = ["brain:read"]
-access_token_ttl_seconds = 3600
-authorization_code_ttl_seconds = 300
-client_store_file = "state/oauth-clients.json"
-
-[oauth.as.keys]
-private_key_file = "state/oauth-private-key.pem"
-key_id = "levitate-local-1"
-
-[oauth.as.dcr]
-enabled = false
-
-[oauth.as.cimd]
-enabled = true
-allowed_client_id_prefixes = ["https://chatgpt.com/"]
-
-[oauth.as.rate_limits]
-window_seconds = 60
-registration = 10
-authorization = 30
-token = 60
-approval = 10
-
-[auth]
-mode = "levitate"
-```
-
-`oauth.as.keys.private_key_file` must point to an existing RSA private key.
-Levitate fails startup when the local authorization server is enabled and the key is missing, unreadable, invalid, or not usable for RS256.
-Levitate does not generate signing keys at runtime.
-
-The local facade serves:
-
-```text
-GET  /.well-known/oauth-authorization-server
-POST /oauth/register
-GET  /oauth/authorize
-POST /oauth/token
-GET  /.well-known/jwks.json
-```
-
-ChatGPT Custom MCP flow:
-
-```text
-ChatGPT
-  -> reads /.well-known/oauth-protected-resource/brain/mcp
-  -> reads /.well-known/oauth-authorization-server
-  -> supplies an HTTPS client_id that points to its metadata document
-  -> Levitate fetches and validates that allowlisted document
-  -> completes authorization_code + PKCE through /oauth/authorize and /oauth/token
-  -> receives a Levitate-issued RS256 JWT access token
-  -> calls the configured MCP endpoint with Authorization: Bearer <token>
-```
-
-CIMD is preferred and advertised through authorization-server metadata when enabled.
-Only HTTPS client IDs matching `oauth.as.cimd.allowed_client_id_prefixes` are fetched; redirects are rejected, response size, time, fetch rate, and cache cardinality are bounded, and documents must identify themselves exactly.
-CIMD redirect URIs must also match `oauth.as.allowed_redirect_uri_prefixes`, and CIMD clients remain external rather than being persisted in Levitate's client store.
-Dynamic Client Registration remains an optional fallback and accepts public clients only.
-Registered redirect URIs must be absolute HTTPS URLs and match `oauth.as.allowed_redirect_uri_prefixes`.
-Levitate does not issue client secrets.
-Authorization codes are short-lived, single-use, and stored in memory only.
-Pending approvals and authorization codes are pruned periodically and discarded on process exit.
-Cleanup timers do not keep Levitate running during shutdown.
-Registered clients persist in the JSON file configured by `oauth.as.client_store_file`.
-
-### Gateway-wide OAuth identity
-
-Multiple named backends can share one explicit local OAuth identity when every authenticated connector should access every backend in the gateway.
-Set `oauth.resource.mode = "gateway"` and use the public origin, without a path, as the canonical resource:
-
-```toml
-[oauth.resource]
-enabled = true
-mode = "gateway"
-resource = "https://levitate.example.com"
-authorization_servers = ["https://levitate.example.com"]
-scopes_supported = ["gateway:access"]
-
-[auth]
-mode = "levitate"
-
-[backends.notes]
-mcp_path = "/notes/mcp"
-[backends.notes.stdio]
-command = "notes-mcp"
-
-[backends.ingest]
-mcp_path = "/ingest/mcp"
-[backends.ingest.stdio]
-command = "ingest-mcp"
-```
-
-Levitate serves path-scoped protected-resource metadata for every backend:
-
-```text
-/.well-known/oauth-protected-resource/notes/mcp
-/.well-known/oauth-protected-resource/ingest/mcp
-```
-
-Every metadata document returns the same origin-level resource.
-ChatGPT echoes that exact resource through authorization and token exchange, and Levitate issues one token whose audience is the gateway origin.
-That token works on every named MCP path while each backend keeps its own process, instructions, readiness state, and tool policy.
-Configured `mcp_path` values must match the public HTTPS paths exposed by the reverse proxy in gateway mode.
-
-Gateway mode intentionally creates one authorization boundary.
-A leaked or misbehaving connector token can reach every backend, subject to backend tool policies.
+Named backends can use one gateway-wide OAuth audience when every authenticated connector should access every backend.
 Use service mode or separate Levitate deployments when backends need separate token audiences.
 
-See [`config/oauth-gateway.example.toml`](config/oauth-gateway.example.toml) for a runnable ChatGPT-oriented configuration.
-
-### Install a Levitate endpoint in ChatGPT
-
-ChatGPT UI labels can change independently of Levitate.
-These steps were verified in ChatGPT developer mode on 2026-08-09; also check OpenAI's current [connection guide](https://developers.openai.com/plugins/deploy/connect-chatgpt).
-
-Before installing an endpoint, enable ChatGPT developer mode under **Settings > Security and login** and confirm that Levitate is reachable through public HTTPS.
-Some ChatGPT builds also expose the Developer mode setting under **Settings > Plugins**.
-Create one ChatGPT plugin entry for each named MCP endpoint that should appear separately in ChatGPT.
-
-1. Open the plugin browser from **Plugins** in the ChatGPT sidebar, or use **Settings > Plugins > Browse plugins**.
-2. Select the **+** button in the top-right corner.
-3. Complete the **New Plugin** dialog:
-
-   | Field | Value |
-   | --- | --- |
-   | Icon | Optional. [`assets/levitate-icon-64.png`](assets/levitate-icon-64.png) fits the current 10 KB upload limit. |
-   | Name | Any clear per-endpoint name, such as `Levitate/Notes` or `Levitate/Admin`. |
-   | Description | Optional. |
-   | Connection | Select **Server URL** and enter the full MCP endpoint, such as `https://levitate.example.com/notes/mcp`. |
-   | Authentication | In the verified ChatGPT dialog, select **OAuth**. OpenAI's connection guide does not show this selector, but Levitate requires OAuth discovery. Streamable HTTP is not an authentication option. |
-
-4. Review the warning for a custom MCP server, then check **I understand and want to continue**.
-5. Select **Create**.
-6. In **Add <plugin name> to ChatGPT**, select **Sign in with <plugin name>**.
-7. On the Levitate approval page, verify the client, redirect origin, resource, scopes, and registration method.
-8. Enter the approval secret stored in the environment variable named by `oauth.as.approval_secret_env`, then select **Approve**.
-9. Enable the new plugin in a ChatGPT conversation and invoke one of its tools.
-
-The approval secret is not an access token.
-Levitate issues the access token only after approval and ChatGPT's authorization-code and PKCE exchange.
-Do not paste the approval secret into a ChatGPT conversation.
-
-Selecting **OAuth** does not choose between CIMD and Dynamic Client Registration.
-The Levitate approval page reports which registration method ChatGPT used.
-If it reports **Dynamic Client Registration**, that connection tested DCR rather than CIMD; an existing registered DCR client remains usable after new DCR registrations are disabled.
-For a CIMD-only deployment, keep `oauth.as.dcr.enabled = false`, enable `oauth.as.cimd`, and treat a CIMD registration label on the approval page as the smoke-test evidence.
-
-### Credential lifecycle and storage limits
-
-Current JSON client store uses atomic file replacement and serializes writes made through one Levitate process.
-It does not coordinate read-modify-write operations across processes or nodes.
-Run one Levitate server against each client store and stop that server before using mutating client-management commands.
-Future multi-node storage can implement the internal client-store interface without changing OAuth route logic.
-
-Client revocation blocks new authorization requests and token exchanges, including exchanges using authorization codes issued before revocation.
-Already-issued access tokens remain valid until their configured expiration because Levitate does not maintain an access-token denylist.
-Use short access-token lifetimes where rapid revocation matters.
-
-Current signing configuration supports one active RSA key and publishes one JWK.
-Changing the private key or key ID invalidates every token signed by the previous key immediately.
-Safe current rotation procedure is: stop Levitate, replace the key file, change `oauth.as.keys.key_id`, restart Levitate, then reauthorize clients.
-Overlapping old/new verification keys and zero-interruption rotation are not implemented.
-
-DCR is closed by default and is unnecessary when client supports CIMD.
-For clients without CIMD support, temporarily set `[oauth.as.dcr] enabled = true` while installing, then set it back to `false` after client appears in `oauth.as.client_store_file`.
-Existing registered clients can still authorize and exchange tokens while DCR is disabled.
-
-OAuth rate limits are optional and process-local.
-When configured, registration uses one gateway-wide bucket while authorization, token, and approval requests use client-specific buckets keyed by submitted client identifier.
-Exceeded limits return `429` with `Retry-After` and do not log submitted secrets, codes, tokens, or PKCE verifiers.
-Multi-node deployments require a shared limiter design before these limits can provide deployment-wide enforcement.
-OAuth security logs include stable `event`, `outcome`, and `requestId` fields for registration, authorization, approval, and token exchange.
-Audit logs never include submitted client metadata bodies, approval secrets, authorization codes, access tokens, or PKCE verifiers.
-
-`approval = "auto"` immediately issues authorization codes after validation and is intended for private tests or temporary setup.
-Set `approval = "manual"` to require an explicit owner approval page before Levitate issues an authorization code.
-Manual approval requires `oauth.as.approval_secret_env`, and the referenced environment variable must contain the approval secret.
-Manual approval displays the client, redirect origin, requested resource, scopes, and registration type after client, redirect URI, resource, scope, and PKCE validation pass, then requires the approval secret before approving.
-Canceling an approval request does not require the approval secret because it only returns `access_denied`.
-Approval and denial responses do not expose tokens, authorization codes, local filesystem paths, or stack traces.
-
-Example:
-
-```sh
-export LEVITATE_APPROVAL_SECRET="$(openssl rand -base64 32)"
-```
-
-Manage registered clients from the same config:
-
-```sh
-levitate oauth clients list --config config/example.local.toml
-levitate oauth clients show <client_id> --config config/example.local.toml
-levitate oauth clients revoke <client_id> --config config/example.local.toml
-```
-
-Revoked clients cannot start new authorization flows or exchange already-issued authorization codes.
-Already-issued access tokens remain valid until expiration.
-
-Access tokens are RS256 JWTs with `iss`, `sub`, `aud`, `scope`, `exp`, `iat`, and `client_id`.
-`auth.mode = "levitate"` validates only Levitate-issued JWTs against the configured issuer, resource audience, public key, expiration, algorithm, and client ID claim.
-Existing `auth.mode = "oidc"` remains available separately for Auth0 and other external RS256 JWKS-backed issuers.
-
-Auth0-backed Dynamic Client Registration, refresh tokens, `private_key_jwt`, hosted login UI, and multi-user management are not implemented.
+See [Authentication](AUTHENTICATION.md) for configuration, discovery endpoints, CIMD/DCR behavior, approval, client management, key rotation, and storage limits.
 
 ## Tool Policy
 
 Levitate filters backend tools before advertising them to remote clients.
-
-Rules:
 
 - If `tools.allow` is configured, only listed tools are advertised and callable.
 - `tools.deny` is always enforced as an extra guard.
@@ -516,18 +176,19 @@ Instructions can be configured inline or loaded from a file:
 file = "/path/to/SKILL.md"
 ```
 
-Levitate passes these instructions through the MCP server initialization result using the official TypeScript SDK `Server` `instructions` option.
+Levitate passes instructions through MCP server initialization using official TypeScript SDK `Server` `instructions` option.
 
 ## Multi-backend Routing
 
 Levitate can host multiple MCP backends by assigning each backend its own HTTP MCP endpoint:
 
-- `/notes/mcp`
-- `/ingest/mcp`
-- `/tools/mcp`
-- `/example/mcp`
+```text
+/notes/mcp
+/ingest/mcp
+/tools/mcp
+```
 
-Each endpoint behaves as an independent MCP server backed by one stdio MCP backend.
+Each endpoint behaves as an independent MCP server backed by one stdio process.
 
 ```toml
 [server]
@@ -548,7 +209,7 @@ mcp_path = "/ingest/mcp"
 command = "ingest-mcp"
 ```
 
-Named backends cannot be combined with legacy top-level `[stdio]` configuration.
+Named backends cannot be combined with the legacy top-level `[stdio]` configuration.
 Backend paths must be unique and cannot overlap health, readiness, OAuth, or well-known routes.
 Policies, instructions, environment, process lifecycle, and readiness remain backend-specific.
 `GET /ready` succeeds only when every backend is ready and includes per-backend states.
@@ -558,15 +219,50 @@ Static bearer and external OIDC authentication apply at gateway level across eve
 Local Levitate OAuth can also apply at gateway level when `oauth.resource.mode = "gateway"` uses one origin-level audience for every backend.
 Service mode remains rejected with multiple named backends so a token naming one MCP path is never silently accepted by another.
 
-Levitate does not merge multiple backend tool namespaces into a single `/mcp` endpoint by default.
-MCP already provides tool discovery through `tools/list`, so Levitate should preserve backend tool names and schemas unless an explicit policy filters or blocks them.
+Levitate does not merge backend tool namespaces into one `/mcp` endpoint.
+MCP already provides tool discovery through `tools/list`, so Levitate preserves backend tool names and schemas unless explicit policy filters or blocks them.
+This avoids tool-name collisions, namespace rewriting, ambiguous routing, and policy mistakes.
 
-This keeps Levitate transport-transparent and avoids tool-name collisions, namespace rewriting, ambiguous routing, and policy mistakes.
-If an aggregate MCP endpoint is ever needed, it should be treated as a separate explicit feature, not the default multi-backend model.
+## Install a Levitate Endpoint in ChatGPT
 
-## Tunnel Deployment
+ChatGPT UI labels can change independently of Levitate.
+These steps were verified in ChatGPT developer mode on 2026-08-09; also check OpenAI's current [connection guide](https://developers.openai.com/plugins/deploy/connect-chatgpt).
 
-Run `levitate` locally, then expose it with Cloudflare Tunnel, ngrok, or another HTTPS tunnel:
+Before installing an endpoint, enable ChatGPT developer mode under **Settings > Security and login** and confirm Levitate is reachable through public HTTPS.
+Some ChatGPT builds also expose Developer mode under **Settings > Plugins**.
+Create one ChatGPT plugin entry for each named MCP endpoint that should appear separately.
+
+1. Open the plugin browser from **Plugins** in the ChatGPT sidebar, or use **Settings > Plugins > Browse plugins**.
+2. Select **+** in the top-right corner.
+3. Complete the **New Plugin** dialog:
+
+   | Field | Value |
+   | --- | --- |
+   | Icon | Optional. [`assets/levitate-icon-64.png`](assets/levitate-icon-64.png) fits current 10 KB upload limit. |
+   | Name | Any clear per-endpoint name, such as `Levitate/Notes` or `Levitate/Admin`. |
+   | Description | Optional. |
+   | Connection | Select **Server URL** and enter full MCP endpoint, such as `https://levitate.example.com/notes/mcp`. |
+   | Authentication | Select **OAuth**. Levitate requires OAuth discovery; Streamable HTTP is not an authentication option. |
+
+4. Review the custom MCP server warning, then check **I understand and want to continue**.
+5. Select **Create**.
+6. In **Add <plugin name> to ChatGPT**, select **Sign in with <plugin name>**.
+7. On the Levitate approval page, verify the client, redirect origin, resource, scopes, and registration method.
+8. Enter the approval secret stored in the environment variable named by `oauth.as.approval_secret_env`, then select **Approve**.
+9. Enable the new plugin in a ChatGPT conversation and invoke one of its tools.
+
+The approval secret is not an access token.
+Levitate issues the access token only after approval and ChatGPT's authorization-code and PKCE exchange.
+Do not paste the approval secret into a ChatGPT conversation.
+
+Selecting **OAuth** does not choose between CIMD and DCR.
+The Levitate approval page reports which registration method ChatGPT used.
+If it reports **Dynamic Client Registration**, the connection tested DCR rather than CIMD; an existing registered DCR client remains usable after new DCR registrations are disabled.
+For a CIMD-only deployment, keep `oauth.as.dcr.enabled = false`, enable `oauth.as.cimd`, and treat the CIMD registration label on the approval page as smoke-test evidence.
+
+## Public HTTPS Deployment
+
+Run Levitate locally, then expose it through reverse proxy, Cloudflare Tunnel, ngrok, or another HTTPS tunnel:
 
 ```sh
 cloudflared tunnel --url http://127.0.0.1:8787
@@ -578,131 +274,7 @@ or:
 ngrok http 8787
 ```
 
-Configure the AI app connector to use the public HTTPS MCP URL and bearer token.
-
-## Smoke Tests
-
-### Fake stdio backend
-
-Use the fake stdio backend for deterministic local checks of Levitate's HTTP proxy and policy behavior:
-
-```sh
-export LEVITATE_TOKEN="dev-secret"
-pnpm build
-pnpm start -- --config config/fake-stdio.toml
-```
-
-In another terminal, connect MCP Inspector over Streamable HTTP with bearer auth:
-
-```sh
-npx -y @modelcontextprotocol/inspector@0.22.0 \
-  --cli \
-  --transport http \
-  --header "Authorization: Bearer ${LEVITATE_TOKEN}" \
-  -- http://127.0.0.1:8790/mcp \
-  --method tools/list
-```
-
-Call the allowed tool:
-
-```sh
-npx -y @modelcontextprotocol/inspector@0.22.0 \
-  --cli \
-  --transport http \
-  --header "Authorization: Bearer ${LEVITATE_TOKEN}" \
-  -- http://127.0.0.1:8790/mcp \
-  --method tools/call \
-  --tool-name fake_allowed \
-  --tool-arg message=hello
-```
-
-Call the denied tool directly:
-
-```sh
-npx -y @modelcontextprotocol/inspector@0.22.0 \
-  --cli \
-  --transport http \
-  --header "Authorization: Bearer ${LEVITATE_TOKEN}" \
-  -- http://127.0.0.1:8790/mcp \
-  --method tools/call \
-  --tool-name fake_denied
-```
-
-Expected result:
-
-- initialize succeeds
-- `tools/list` advertises `fake_allowed`
-- `fake_denied` is not advertised
-- calling `fake_allowed` returns fixture JSON
-- directly calling `fake_denied` returns an MCP tool error from Levitate
-
-The automated version is covered by:
-
-```sh
-pnpm test test/mcp.test.ts
-```
-
-### Optional local real-backend smoke test
-
-You can test Levitate against any real stdio MCP backend using a local config.
-This is not required for normal development or CI.
-Create a local config that points to your backend, then choose one safe allowed tool and one denied tool for policy testing.
-
-```sh
-export LEVITATE_TOKEN="$(openssl rand -hex 32)"
-export LEVITATE_CONFIG="config/example.local.toml"
-export LEVITATE_SAFE_TOOL="example_safe_tool"
-export LEVITATE_DENIED_TOOL="example_denied_tool"
-pnpm build
-pnpm start -- --config "$LEVITATE_CONFIG"
-```
-
-In another terminal, connect MCP Inspector:
-
-```sh
-npx -y @modelcontextprotocol/inspector@0.22.0 \
-  --cli \
-  --transport http \
-  --header "Authorization: Bearer ${LEVITATE_TOKEN}" \
-  -- http://127.0.0.1:8787/mcp \
-  --method tools/list
-```
-
-Call a safe read-only tool:
-
-```sh
-npx -y @modelcontextprotocol/inspector@0.22.0 \
-  --cli \
-  --transport http \
-  --header "Authorization: Bearer ${LEVITATE_TOKEN}" \
-  -- http://127.0.0.1:8787/mcp \
-  --method tools/call \
-  --tool-name "$LEVITATE_SAFE_TOOL"
-```
-
-Call a denied tool directly:
-
-```sh
-npx -y @modelcontextprotocol/inspector@0.22.0 \
-  --cli \
-  --transport http \
-  --header "Authorization: Bearer ${LEVITATE_TOKEN}" \
-  -- http://127.0.0.1:8787/mcp \
-  --method tools/call \
-  --tool-name "$LEVITATE_DENIED_TOOL"
-```
-
-If a tool requires arguments, add `--tool-arg key=value` entries according to the backend's advertised input schema.
-
-Verify in Inspector:
-
-- initialize succeeds
-- `tools/list` shows allowed backend tools
-- allowed tool calls work through Levitate
-- denied direct calls return an MCP tool error instead of an HTTP error or server crash
-
-MCP Inspector `0.22.0` CLI supports HTTP headers with `--header`, so the smoke test keeps bearer-token auth enabled.
-The browser UI path may require entering headers in the UI; use the CLI commands above as the reproducible smoke path.
+Configure the remote MCP host with the public HTTPS endpoint and selected authentication mode.
 
 ## Docker
 
@@ -721,35 +293,9 @@ docker run --rm -p 8787:8787 \
   levitate
 ```
 
-For local stdio servers that need host files, mount required vault/tool paths and adjust config paths for the container.
+For local stdio servers that need host files, mount the required vault or tool paths and adjust config paths for the container.
 
-## Auth Notes
-
-OIDC/JWT validation and Levitate-issued JWT validation run behind the same `Authenticator` interface as static bearer tokens.
-
-OIDC validation checks:
-
-- JWKS signature
-- issuer
-- audience
-- expiration
-- not-before when present
-- subject or email allowlists when configured
-
-Levitate-issued JWT validation checks:
-
-- JWKS signature from the configured local authorization server key
-- issuer
-- resource audience
-- expiration
-- RS256 algorithm
-- `client_id` claim
-- scopes
-
-Only RS256 JWTs are accepted for OIDC and local authorization server modes.
-Static bearer auth remains available for local/dev/simple deployments.
-
-## MCP Transport Choice
+## MCP Transport
 
 Levitate uses the official `@modelcontextprotocol/sdk` v1 Streamable HTTP implementation:
 
@@ -758,25 +304,22 @@ Levitate uses the official `@modelcontextprotocol/sdk` v1 Streamable HTTP implem
 - HTTP framework: Hono, following the SDK Hono example
 
 The remote endpoint defaults to `/mcp` and uses JSON responses from Streamable HTTP for straightforward request/response behavior.
-Deployments can change the endpoint path with `server.mcp_path`.
-During MCP initialization, Levitate advertises its package version, a human-readable title, description, project website, and 64x64 PNG icon through `serverInfo`.
-The icon is available without authentication at `/assets/levitate-icon-64.png`; clients decide whether and where to display this metadata.
-Compatibility should be validated against each target remote MCP host because Claude, ChatGPT, and other hosts may differ in connector rollout details.
+Deployments can change the endpoint path with `server.mcp_path` or define independent paths for named backends.
+During MCP initialization, Levitate advertises its package version, human-readable title, description, project website, and 64x64 PNG icon through `serverInfo`.
+The icon is available without authentication at `/assets/levitate-icon-64.png`; clients decide whether and where to display the metadata.
+Compatibility should be validated against each target remote MCP host because connector behavior can differ.
 
 ## Non-Goals
 
-- No web UI
-- No Chrome extension
-- No WebRTC mode
-- No OAuth login UI
-- No hosted multi-user approval UI
-- No multi-user management
-- No multi-profile routing
-- No persistent audit database
-- No backend-specific wrapper behavior
-- No Go or Rust rewrite plan
+- Hosted multi-user service or multi-user management
+- Automatic aggregation of backend tool namespaces
+- Backend-specific wrapper behavior
+- Shared multi-node OAuth state, rate limits, or zero-interruption key rotation
+- Persistent audit database
 
-## Validation
+## Development
+
+See [Testing](TESTING.md) for full validation and smoke-test workflow.
 
 ```sh
 pnpm test
