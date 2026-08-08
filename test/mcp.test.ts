@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type {
@@ -15,6 +16,9 @@ import { StdioMcpBackend } from "../src/mcp/backend.js";
 import { createApp } from "../src/server.js";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const packageVersion = (JSON.parse(
+  readFileSync(resolve(repoRoot, "package.json"), "utf8"),
+) as { version: string }).version;
 
 const logger: Logger = {
   debug: () => {},
@@ -44,6 +48,7 @@ const config: LevitateConfig = {
   oauth: {
     resource: {
       enabled: false,
+      mode: "service",
       authorization_servers: [],
       scopes_supported: [],
     },
@@ -203,6 +208,24 @@ describe("mcp endpoint", () => {
     expect(response.status).toBe(204);
   });
 
+  it("serves the public Levitate server icon", async () => {
+    const app = createApp({
+      config,
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const response = await app.fetch(new Request(
+      "http://localhost/assets/levitate-icon-64.png",
+    ));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=3600");
+    expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
+  });
+
   it("permits all CORS origins by default", async () => {
     const app = createApp({
       config,
@@ -357,6 +380,7 @@ describe("mcp endpoint", () => {
         oauth: {
           resource: {
             enabled: true,
+            mode: "service",
             resource: "https://levitate.example.com/brain/mcp",
             authorization_servers: ["https://auth.example.com/"],
             scopes_supported: ["levitate:read", "levitate:call"],
@@ -401,6 +425,7 @@ describe("mcp endpoint", () => {
         oauth: {
           resource: {
             enabled: true,
+            mode: "service",
             resource: "https://levitate.example.com/brain/mcp",
             authorization_servers: ["https://auth.example.com/"],
             scopes_supported: ["levitate:read"],
@@ -437,6 +462,7 @@ describe("mcp endpoint", () => {
         oauth: {
           resource: {
             enabled: true,
+            mode: "service",
             resource: "https://levitate.example.com/brain/mcp/",
             authorization_servers: ["https://auth.example.com/"],
             scopes_supported: ["levitate:read"],
@@ -464,6 +490,66 @@ describe("mcp endpoint", () => {
     );
   });
 
+  it("serves gateway metadata and route-specific challenges for named backends", async () => {
+    const backendConfig = (id: string, path: string) => ({
+      id,
+      name: id,
+      mcp_path: path,
+      stdio: { command: "unused", args: [] },
+      env: {},
+      instructions: {},
+      tools: { deny: [] },
+    });
+    const app = createApp({
+      config: {
+        ...config,
+        oauth: {
+          resource: {
+            enabled: true,
+            mode: "gateway",
+            resource: "https://levitate.example.com",
+            authorization_servers: ["https://levitate.example.com"],
+            scopes_supported: ["gateway:access"],
+          },
+          as: config.oauth.as,
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backends: [
+        { config: backendConfig("notes", "/notes/mcp"), backend },
+        { config: backendConfig("ingest", "/ingest/mcp"), backend },
+      ],
+      logger,
+    });
+
+    for (const path of ["/notes/mcp", "/ingest/mcp"]) {
+      const metadataPath = `/.well-known/oauth-protected-resource${path}`;
+      const metadata = await app.fetch(new Request(`http://localhost${metadataPath}`));
+      expect(metadata.status).toBe(200);
+      await expect(metadata.json()).resolves.toEqual({
+        resource: "https://levitate.example.com",
+        authorization_servers: ["https://levitate.example.com"],
+        bearer_methods_supported: ["header"],
+        scopes_supported: ["gateway:access"],
+      });
+
+      const unauthorized = await app.fetch(new Request(`http://localhost${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      }));
+      expect(unauthorized.status).toBe(401);
+      expect(unauthorized.headers.get("www-authenticate")).toBe(
+        `Bearer resource_metadata="https://levitate.example.com${metadataPath}"`,
+      );
+    }
+
+    const rootMetadata = await app.fetch(new Request(
+      "http://localhost/.well-known/oauth-protected-resource",
+    ));
+    expect(rootMetadata.status).toBe(200);
+  });
+
   it("proxies tools through streamable http with policy applied", async () => {
     const app = createApp({
       config,
@@ -487,6 +573,19 @@ describe("mcp endpoint", () => {
       },
     );
     await client.connect(transport);
+
+    expect(client.getServerVersion()).toEqual({
+      name: "test",
+      title: "Levitate / test",
+      version: packageVersion,
+      description: "MCP endpoint exposed through Levitate.",
+      websiteUrl: "https://github.com/iomz/levitate",
+      icons: [{
+        src: "http://localhost/assets/levitate-icon-64.png",
+        mimeType: "image/png",
+        sizes: ["64x64"],
+      }],
+    });
 
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name)).toEqual(["search"]);

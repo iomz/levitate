@@ -52,6 +52,7 @@ const config: LevitateConfig = {
   oauth: {
     resource: {
       enabled: false,
+      mode: "service",
       authorization_servers: [],
       scopes_supported: [],
     },

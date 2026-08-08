@@ -2,10 +2,10 @@ import { generateKeyPairSync, createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SignJWT } from "jose";
+import { decodeJwt, SignJWT } from "jose";
 import { describe, expect, it } from "vitest";
 import { createAuthenticator } from "../src/auth/index.js";
-import type { LevitateConfig } from "../src/config.js";
+import { getBackendConfigs, type LevitateConfig } from "../src/config.js";
 import type { Logger } from "../src/logging.js";
 import type { StdioMcpBackend } from "../src/mcp/backend.js";
 import { runOAuthClientsCommand } from "../src/oauth/as/clients-cli.js";
@@ -145,6 +145,101 @@ describe("oauth authorization server facade", () => {
     const response = await token(context.app, validTokenRequest(code, clientId, validVerifier));
     expect(response.status).toBe(200);
     expect(fetchCount).toBe(1);
+  });
+
+  it("uses one ChatGPT CIMD gateway token across named MCP backends", async () => {
+    const clientId = "https://chatgpt.com/oauth/gateway-client.json";
+    const gatewayResource = "https://levitate.example.com";
+    const context = createTestConfig({
+      cimdEnabled: true,
+      cimdAllowedClientIdPrefixes: ["https://chatgpt.com/oauth/"],
+      dcrEnabled: false,
+    });
+    context.config.oauth.resource = {
+      enabled: true,
+      mode: "gateway",
+      resource: gatewayResource,
+      authorization_servers: [gatewayResource],
+      scopes_supported: ["brain:read", "brain:write"],
+    };
+    context.config.stdio = undefined;
+    context.config.backends = {
+      notes: {
+        mcp_path: "/notes/mcp",
+        stdio: { command: "unused", args: [] },
+        env: {},
+        instructions: {},
+        tools: { allow: ["search"], deny: [] },
+      },
+      ingest: {
+        mcp_path: "/ingest/mcp",
+        stdio: { command: "unused", args: [] },
+        env: {},
+        instructions: {},
+        tools: { allow: ["search"], deny: [] },
+      },
+    };
+    const fetchImpl = (async () => new Response(JSON.stringify({
+      client_id: clientId,
+      client_name: "ChatGPT",
+      redirect_uris: ["https://chatgpt.com/connector/oauth/callback"],
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+      token_endpoint_auth_methods_supported: ["none", "private_key_jwt"],
+    }), {
+      headers: {
+        "content-type": "application/json",
+        "cache-control": "max-age=60",
+      },
+    })) as typeof fetch;
+    const keys = await loadAuthorizationServerKeys(context.config);
+    const oauthAuthorizationServer = createOAuthAuthorizationServer(
+      context.config,
+      keys,
+      logger,
+      fetchImpl,
+    );
+    const app = createApp({
+      config: context.config,
+      authenticator: createAuthenticator(context.config, keys),
+      backends: getBackendConfigs(context.config).map((config) => ({
+        config,
+        backend,
+      })),
+      logger,
+      oauthAuthorizationServer,
+    });
+
+    const code = await authorizeAndGetCode(app, clientId, validVerifier, gatewayResource);
+    expect(code).not.toBe("");
+    const issued = await token(
+      app,
+      validTokenRequest(code, clientId, validVerifier, undefined, gatewayResource),
+    );
+    expect(issued.status).toBe(200);
+    const body = await issued.json() as { access_token: string };
+    expect(decodeJwt(body.access_token).aud).toBe(gatewayResource);
+
+    for (const path of ["/notes/mcp", "/ingest/mcp"]) {
+      const response = await app.fetch(new Request(`http://localhost${path}`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${body.access_token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "chatgpt", version: "1.0.0" },
+          },
+        }),
+      }));
+      expect(response.status).not.toBe(401);
+    }
   });
 
   it("does not fetch CIMD client IDs outside configured prefixes", async () => {
@@ -548,6 +643,7 @@ describe("oauth authorization server facade", () => {
     expect(html).toContain("https://chatgpt.com");
     expect(html).toContain("https://levitate.example.com/brain/mcp");
     expect(html).toContain("brain:read");
+    expect(html).toContain("Dynamic Client Registration");
     expect(html).toContain("Approval secret");
     expect(html).toContain('id="eye_open"');
     expect(html).toContain('id="eye_closed"');
@@ -561,6 +657,39 @@ describe("oauth authorization server facade", () => {
     expect(location.origin + location.pathname).toBe("https://chatgpt.com/connector/oauth/callback");
     expect(location.searchParams.get("code")).toBeTruthy();
     expect(location.searchParams.get("state")).toBe("state-1");
+  });
+
+  it("identifies CIMD clients on the manual approval page", async () => {
+    const clientId = "https://chatgpt.com/oauth/manual-client.json";
+    const fetchImpl = (async () => new Response(JSON.stringify({
+      client_id: clientId,
+      client_name: "ChatGPT",
+      redirect_uris: ["https://chatgpt.com/connector/oauth/callback"],
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+      token_endpoint_auth_methods_supported: ["none", "private_key_jwt"],
+    }), {
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+    const context = await createTestApp({
+      approval: "manual",
+      dcrEnabled: false,
+      cimdEnabled: true,
+      cimdAllowedClientIdPrefixes: ["https://chatgpt.com/oauth/"],
+      fetchImpl,
+    });
+    const response = await authorize(context.app, {
+      client_id: clientId,
+      redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+      code_challenge: pkceChallenge(validVerifier),
+      resource: "https://levitate.example.com/brain/mcp",
+      state: "state-1",
+    });
+
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("Client ID Metadata Document (CIMD)");
+    expect(html).not.toContain("Dynamic Client Registration");
   });
 
   it("requires the owner approval secret before approving manually", async () => {
@@ -834,6 +963,7 @@ function createTestConfig(options: TestOptions = {}) {
     oauth: {
       resource: {
         enabled: true,
+        mode: "service",
         resource: "https://levitate.example.com/brain/mcp",
         authorization_servers: ["https://levitate.example.com"],
         scopes_supported: ["brain:read", "brain:write"],
@@ -943,12 +1073,13 @@ async function authorizeAndGetCode(
   app: Awaited<ReturnType<typeof createTestApp>>["app"],
   clientId: string,
   verifier: string,
+  resource = "https://levitate.example.com/brain/mcp",
 ) {
   const response = await authorize(app, {
     client_id: clientId,
     redirect_uri: "https://chatgpt.com/connector/oauth/callback",
     code_challenge: pkceChallenge(verifier),
-    resource: "https://levitate.example.com/brain/mcp",
+    resource,
   });
   const location = new URL(response.headers.get("location") ?? "");
   return location.searchParams.get("code") ?? "";

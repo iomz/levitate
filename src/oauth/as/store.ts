@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 export interface OAuthClient {
   client_id: string;
   client_name?: string;
+  registration_method?: "cimd" | "dcr";
   redirect_uris: string[];
   grant_types: string[];
   response_types: string[];
@@ -46,6 +47,7 @@ export class JsonClientStore implements ClientStore {
         ...client,
         client_id: randomUUID(),
         created_at: new Date().toISOString(),
+        registration_method: "dcr",
       };
       data.clients.push(registered);
       await this.write(data);
@@ -55,7 +57,10 @@ export class JsonClientStore implements ClientStore {
 
   async get(clientId: string): Promise<RegisteredClient | undefined> {
     const data = await this.read();
-    return data.clients.find((client) => client.client_id === clientId);
+    const client = data.clients.find((entry) => entry.client_id === clientId);
+    return client
+      ? { ...client, registration_method: client.registration_method ?? "dcr" }
+      : undefined;
   }
 
   async list(): Promise<RegisteredClient[]> {
