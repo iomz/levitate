@@ -404,7 +404,7 @@ See [`config/oauth-gateway.example.toml`](config/oauth-gateway.example.toml) for
 ### Install a Levitate endpoint in ChatGPT
 
 ChatGPT UI labels can change independently of Levitate.
-These steps were verified in ChatGPT developer mode on 2026-08-09 in Asia/Tokyo (2026-08-08 UTC); also check OpenAI's current [connection guide](https://developers.openai.com/plugins/deploy/connect-chatgpt).
+These steps were verified in ChatGPT developer mode on 2026-08-09; also check OpenAI's current [connection guide](https://developers.openai.com/plugins/deploy/connect-chatgpt).
 
 Before installing an endpoint, enable ChatGPT developer mode under **Settings > Security and login** and confirm that Levitate is reachable through public HTTPS.
 Some ChatGPT builds also expose the Developer mode setting under **Settings > Plugins**.
