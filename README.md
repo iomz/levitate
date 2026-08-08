@@ -759,7 +759,7 @@ Levitate uses the official `@modelcontextprotocol/sdk` v1 Streamable HTTP implem
 
 The remote endpoint defaults to `/mcp` and uses JSON responses from Streamable HTTP for straightforward request/response behavior.
 Deployments can change the endpoint path with `server.mcp_path`.
-During MCP initialization, Levitate advertises a human-readable title, description, project website, and its 64x64 PNG icon through `serverInfo`.
+During MCP initialization, Levitate advertises its package version, a human-readable title, description, project website, and 64x64 PNG icon through `serverInfo`.
 The icon is available without authentication at `/assets/levitate-icon-64.png`; clients decide whether and where to display this metadata.
 Compatibility should be validated against each target remote MCP host because Claude, ChatGPT, and other hosts may differ in connector rollout details.
 

@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type {
@@ -15,6 +16,9 @@ import { StdioMcpBackend } from "../src/mcp/backend.js";
 import { createApp } from "../src/server.js";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const packageVersion = (JSON.parse(
+  readFileSync(resolve(repoRoot, "package.json"), "utf8"),
+) as { version: string }).version;
 
 const logger: Logger = {
   debug: () => {},
@@ -573,7 +577,7 @@ describe("mcp endpoint", () => {
     expect(client.getServerVersion()).toEqual({
       name: "test",
       title: "Levitate / test",
-      version: "0.1.0",
+      version: packageVersion,
       description: "MCP endpoint exposed through Levitate.",
       websiteUrl: "https://github.com/iomz/levitate",
       icons: [{

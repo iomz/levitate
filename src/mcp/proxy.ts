@@ -7,6 +7,7 @@ import {
 import type { StdioMcpBackend } from "./backend.js";
 import { deniedReason, filterTools, type ToolPolicy } from "./policy.js";
 import type { Logger } from "../logging.js";
+import { LEVITATE_VERSION } from "../version.js";
 
 export interface ProxyOptions {
   serverName: string;
@@ -34,7 +35,7 @@ export function createProxyServer(options: ProxyOptions): Server {
     {
       name: options.serverName,
       title: `Levitate / ${options.serverName}`,
-      version: "0.1.0",
+      version: LEVITATE_VERSION,
       description: "MCP endpoint exposed through Levitate.",
       websiteUrl: "https://github.com/iomz/levitate",
       icons: options.serverIconUrl
