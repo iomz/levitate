@@ -44,6 +44,7 @@ const config: LevitateConfig = {
   oauth: {
     resource: {
       enabled: false,
+      mode: "service",
       authorization_servers: [],
       scopes_supported: [],
     },
@@ -357,6 +358,7 @@ describe("mcp endpoint", () => {
         oauth: {
           resource: {
             enabled: true,
+            mode: "service",
             resource: "https://levitate.example.com/brain/mcp",
             authorization_servers: ["https://auth.example.com/"],
             scopes_supported: ["levitate:read", "levitate:call"],
@@ -401,6 +403,7 @@ describe("mcp endpoint", () => {
         oauth: {
           resource: {
             enabled: true,
+            mode: "service",
             resource: "https://levitate.example.com/brain/mcp",
             authorization_servers: ["https://auth.example.com/"],
             scopes_supported: ["levitate:read"],
@@ -437,6 +440,7 @@ describe("mcp endpoint", () => {
         oauth: {
           resource: {
             enabled: true,
+            mode: "service",
             resource: "https://levitate.example.com/brain/mcp/",
             authorization_servers: ["https://auth.example.com/"],
             scopes_supported: ["levitate:read"],
@@ -462,6 +466,66 @@ describe("mcp endpoint", () => {
     expect(unauthorized.headers.get("www-authenticate")).toBe(
       'Bearer resource_metadata="https://levitate.example.com/.well-known/oauth-protected-resource/brain/mcp/"',
     );
+  });
+
+  it("serves gateway metadata and route-specific challenges for named backends", async () => {
+    const backendConfig = (id: string, path: string) => ({
+      id,
+      name: id,
+      mcp_path: path,
+      stdio: { command: "unused", args: [] },
+      env: {},
+      instructions: {},
+      tools: { deny: [] },
+    });
+    const app = createApp({
+      config: {
+        ...config,
+        oauth: {
+          resource: {
+            enabled: true,
+            mode: "gateway",
+            resource: "https://levitate.example.com",
+            authorization_servers: ["https://levitate.example.com"],
+            scopes_supported: ["gateway:access"],
+          },
+          as: config.oauth.as,
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backends: [
+        { config: backendConfig("notes", "/notes/mcp"), backend },
+        { config: backendConfig("ingest", "/ingest/mcp"), backend },
+      ],
+      logger,
+    });
+
+    for (const path of ["/notes/mcp", "/ingest/mcp"]) {
+      const metadataPath = `/.well-known/oauth-protected-resource${path}`;
+      const metadata = await app.fetch(new Request(`http://localhost${metadataPath}`));
+      expect(metadata.status).toBe(200);
+      await expect(metadata.json()).resolves.toEqual({
+        resource: "https://levitate.example.com",
+        authorization_servers: ["https://levitate.example.com"],
+        bearer_methods_supported: ["header"],
+        scopes_supported: ["gateway:access"],
+      });
+
+      const unauthorized = await app.fetch(new Request(`http://localhost${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      }));
+      expect(unauthorized.status).toBe(401);
+      expect(unauthorized.headers.get("www-authenticate")).toBe(
+        `Bearer resource_metadata="https://levitate.example.com${metadataPath}"`,
+      );
+    }
+
+    const rootMetadata = await app.fetch(new Request(
+      "http://localhost/.well-known/oauth-protected-resource",
+    ));
+    expect(rootMetadata.status).toBe(200);
   });
 
   it("proxies tools through streamable http with policy applied", async () => {

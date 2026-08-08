@@ -229,6 +229,7 @@ Levitate can serve OAuth protected resource metadata for remote MCP hosts that d
 ```toml
 [oauth.resource]
 enabled = true
+mode = "service"
 resource = "https://levitate.example.com/brain/mcp"
 authorization_servers = ["https://auth.example.com/"]
 scopes_supported = ["levitate:read", "levitate:call"]
@@ -260,6 +261,8 @@ WWW-Authenticate: Bearer resource_metadata="https://levitate.example.com/.well-k
 
 By default, Levitate derives that path-scoped metadata URL from the configured resource URL.
 Set `oauth.resource.metadata_url` only when the public metadata URL needs an explicit override.
+`mode = "service"` is the default and binds the resource identity to one canonical MCP endpoint.
+Gateway mode derives one metadata URL per backend and therefore rejects this single-URL override.
 
 ### Local OAuth authorization server facade
 
@@ -352,6 +355,87 @@ Authorization codes are short-lived, single-use, and stored in memory only.
 Pending approvals and authorization codes are pruned periodically and discarded on process exit.
 Cleanup timers do not keep Levitate running during shutdown.
 Registered clients persist in the JSON file configured by `oauth.as.client_store_file`.
+
+### Gateway-wide OAuth identity
+
+Multiple named backends can share one explicit local OAuth identity when every authenticated connector should access every backend in the gateway.
+Set `oauth.resource.mode = "gateway"` and use the public origin, without a path, as the canonical resource:
+
+```toml
+[oauth.resource]
+enabled = true
+mode = "gateway"
+resource = "https://levitate.example.com"
+authorization_servers = ["https://levitate.example.com"]
+scopes_supported = ["gateway:access"]
+
+[auth]
+mode = "levitate"
+
+[backends.notes]
+mcp_path = "/notes/mcp"
+[backends.notes.stdio]
+command = "notes-mcp"
+
+[backends.ingest]
+mcp_path = "/ingest/mcp"
+[backends.ingest.stdio]
+command = "ingest-mcp"
+```
+
+Levitate serves path-scoped protected-resource metadata for every backend:
+
+```text
+/.well-known/oauth-protected-resource/notes/mcp
+/.well-known/oauth-protected-resource/ingest/mcp
+```
+
+Every metadata document returns the same origin-level resource.
+ChatGPT echoes that exact resource through authorization and token exchange, and Levitate issues one token whose audience is the gateway origin.
+That token works on every named MCP path while each backend keeps its own process, instructions, readiness state, and tool policy.
+Configured `mcp_path` values must match the public HTTPS paths exposed by the reverse proxy in gateway mode.
+
+Gateway mode intentionally creates one authorization boundary.
+A leaked or misbehaving connector token can reach every backend, subject to backend tool policies.
+Use service mode or separate Levitate deployments when backends need separate token audiences.
+
+See [`config/oauth-gateway.example.toml`](config/oauth-gateway.example.toml) for a runnable ChatGPT-oriented configuration.
+
+### Install a Levitate endpoint in ChatGPT
+
+ChatGPT UI labels can change independently of Levitate.
+These steps were verified in ChatGPT developer mode on 2026-08-09; also check OpenAI's current [connection guide](https://developers.openai.com/plugins/deploy/connect-chatgpt).
+
+Before installing an endpoint, enable ChatGPT developer mode and confirm that Levitate is reachable through public HTTPS.
+Create one ChatGPT plugin entry for each named MCP endpoint that should appear separately in ChatGPT.
+
+1. Open the plugin browser from **Plugins** in the ChatGPT sidebar, or use **Settings > Plugins > Browse plugins**.
+2. Select the **+** button in the top-right corner.
+3. Complete the **New Plugin** dialog:
+
+   | Field | Value |
+   | --- | --- |
+   | Icon | Optional. [`assets/levitate-icon-64.png`](assets/levitate-icon-64.png) fits the current 10 KB upload limit. |
+   | Name | Any clear per-endpoint name, such as `Levitate/Notes` or `Levitate/Admin`. |
+   | Description | Optional. |
+   | Connection | Select **Server URL** and enter the full MCP endpoint, such as `https://levitate.example.com/notes/mcp`. |
+   | Authentication | Select **OAuth**. Streamable HTTP is not an authentication option in the current dialog. |
+
+4. Review the warning for a custom MCP server, then check **I understand and want to continue**.
+5. Select **Create**.
+6. In **Add <plugin name> to ChatGPT**, select **Sign in with <plugin name>**.
+7. On the Levitate approval page, verify the client, redirect origin, resource, scopes, and registration method.
+8. Enter the approval secret stored in the environment variable named by `oauth.as.approval_secret_env`, then select **Approve**.
+9. Enable the new plugin in a ChatGPT conversation and invoke one of its tools.
+
+The approval secret is not an access token.
+Levitate issues the access token only after approval and ChatGPT's authorization-code and PKCE exchange.
+Do not paste the approval secret into a ChatGPT conversation.
+
+Selecting **OAuth** does not choose between CIMD and Dynamic Client Registration.
+The Levitate approval page reports which registration method ChatGPT used.
+If it reports **Dynamic Client Registration**, that connection tested DCR rather than CIMD; an existing registered DCR client remains usable after new DCR registrations are disabled.
+For a CIMD-only deployment, keep `oauth.as.dcr.enabled = false`, enable `oauth.as.cimd`, and treat a CIMD registration label on the approval page as the smoke-test evidence.
 
 ### Credential lifecycle and storage limits
 
@@ -470,8 +554,8 @@ Policies, instructions, environment, process lifecycle, and readiness remain bac
 Startup failure closes every backend already started before Levitate exits.
 
 Static bearer and external OIDC authentication apply at gateway level across every backend.
-Current local Levitate authorization server and OAuth protected-resource metadata remain single-backend-only because each MCP endpoint requires distinct resource discovery and audience semantics.
-Configuration rejects those OAuth modes with multiple named backends rather than accepting tokens for an unintended route.
+Local Levitate OAuth can also apply at gateway level when `oauth.resource.mode = "gateway"` uses one origin-level audience for every backend.
+Service mode remains rejected with multiple named backends so a token naming one MCP path is never silently accepted by another.
 
 Levitate does not merge multiple backend tool namespaces into a single `/mcp` endpoint by default.
 MCP already provides tool discovery through `tools/list`, so Levitate should preserve backend tool names and schemas unless an explicit policy filters or blocks them.

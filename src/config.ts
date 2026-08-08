@@ -43,6 +43,7 @@ const CimdClientIdPrefixSchema = HttpsUrlSchema.refine((value) => {
 
 const OAuthResourceSchema = z.object({
   enabled: z.boolean().default(false),
+  mode: z.enum(["service", "gateway"]).default("service"),
   resource: OAuthResourceUrlSchema.optional(),
   authorization_servers: z.array(HttpsUrlSchema).default([]),
   scopes_supported: z.array(z.string().min(1)).default([]),
@@ -63,6 +64,25 @@ const OAuthResourceSchema = z.object({
       code: z.ZodIssueCode.custom,
       message: "oauth.resource.authorization_servers must be non-empty when oauth.resource.enabled is true",
       path: ["authorization_servers"],
+    });
+  }
+
+  if (value.mode === "gateway" && value.resource) {
+    const resourceUrl = new URL(value.resource);
+    if (value.resource !== resourceUrl.origin) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "oauth.resource.resource must be an origin without a path in gateway mode",
+        path: ["resource"],
+      });
+    }
+  }
+
+  if (value.mode === "gateway" && value.metadata_url) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "oauth.resource.metadata_url cannot override per-backend metadata URLs in gateway mode",
+      path: ["metadata_url"],
     });
   }
 });
@@ -282,11 +302,27 @@ const ConfigSchema = z.object({
       context.addIssue({ code: z.ZodIssueCode.custom, message: `backend mcp_path is reserved: ${path}`, path: ["server", "mcp_path"] });
     }
   }
-  if (backendEntries.length > 1 && value.oauth.resource.enabled) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: "oauth.resource is currently supported only with one backend", path: ["oauth", "resource"] });
+  if (
+    backendEntries.length > 1 &&
+    value.oauth.resource.enabled &&
+    value.oauth.resource.mode !== "gateway"
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "oauth.resource.mode must be gateway when OAuth metadata protects multiple named backends",
+      path: ["oauth", "resource", "mode"],
+    });
   }
-  if (backendEntries.length > 1 && value.auth.mode === "levitate") {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: "auth.mode levitate is currently supported only with one backend", path: ["auth", "mode"] });
+  if (
+    backendEntries.length > 1 &&
+    value.auth.mode === "levitate" &&
+    (!value.oauth.resource.enabled || value.oauth.resource.mode !== "gateway")
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "auth.mode levitate requires enabled gateway OAuth resource mode with multiple named backends",
+      path: ["auth", "mode"],
+    });
   }
   if (value.auth.mode === "levitate" && !value.oauth.as.enabled) {
     context.addIssue({

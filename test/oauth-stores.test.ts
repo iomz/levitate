@@ -31,6 +31,7 @@ describe("oauth ephemeral stores", () => {
     const pending: PendingAuthorization = {
       id: "pending",
       clientId: "client",
+      registrationMethod: "dcr",
       redirectUri: "https://example.com/callback",
       resource: "https://example.com/mcp",
       scopes: ["read"],

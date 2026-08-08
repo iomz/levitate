@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { getBackendConfigs, parseConfigText } from "../src/config.js";
 
@@ -204,9 +205,143 @@ scopes_supported = ["levitate:read", "levitate:call"]
 `);
 
     expect(config.oauth.resource.enabled).toBe(true);
+    expect(config.oauth.resource.mode).toBe("service");
     expect(config.oauth.resource.resource).toBe("https://levitate.example.com/brain/mcp");
     expect(config.oauth.resource.authorization_servers).toEqual(["https://auth.example.com/"]);
     expect(config.oauth.resource.scopes_supported).toEqual(["levitate:read", "levitate:call"]);
+  });
+
+  it("accepts explicit gateway OAuth identity for multiple named backends", () => {
+    const config = parseConfigText(`
+[server]
+name = "gateway"
+
+[auth]
+mode = "levitate"
+
+[oauth.resource]
+enabled = true
+mode = "gateway"
+resource = "https://levitate.example.com"
+authorization_servers = ["https://levitate.example.com"]
+scopes_supported = ["gateway:access"]
+
+[oauth.as]
+enabled = true
+issuer = "https://levitate.example.com"
+subject = "local-user"
+allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
+scopes_supported = ["gateway:access"]
+default_scopes = ["gateway:access"]
+client_store_file = "state/oauth-clients.json"
+
+[oauth.as.cimd]
+enabled = true
+allowed_client_id_prefixes = ["https://chatgpt.com/"]
+
+[oauth.as.keys]
+private_key_file = "state/oauth-private-key.pem"
+key_id = "gateway-key"
+
+[backends.notes]
+mcp_path = "/notes/mcp"
+[backends.notes.stdio]
+command = "notes-mcp"
+
+[backends.ingest]
+mcp_path = "/ingest/mcp"
+[backends.ingest.stdio]
+command = "ingest-mcp"
+`);
+
+    expect(config.oauth.resource.mode).toBe("gateway");
+    expect(config.oauth.resource.resource).toBe("https://levitate.example.com");
+    expect(getBackendConfigs(config)).toHaveLength(2);
+  });
+
+  it("parses the runnable gateway OAuth example", () => {
+    const config = parseConfigText(readFileSync(
+      new URL("../config/oauth-gateway.example.toml", import.meta.url),
+      "utf8",
+    ));
+
+    expect(config.oauth.resource).toEqual(expect.objectContaining({
+      enabled: true,
+      mode: "gateway",
+      resource: "https://levitate.example.com",
+    }));
+    expect(config.auth.mode).toBe("levitate");
+    expect(getBackendConfigs(config).map((backend) => backend.mcp_path)).toEqual([
+      "/notes/mcp",
+      "/admin/mcp",
+    ]);
+  });
+
+  it("rejects service-specific OAuth identity for multiple named backends", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "gateway"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+
+[oauth.resource]
+enabled = true
+resource = "https://levitate.example.com/notes/mcp"
+authorization_servers = ["https://auth.example.com"]
+
+[backends.notes]
+mcp_path = "/notes/mcp"
+[backends.notes.stdio]
+command = "notes-mcp"
+
+[backends.ingest]
+mcp_path = "/ingest/mcp"
+[backends.ingest.stdio]
+command = "ingest-mcp"
+`)).toThrow("oauth.resource.mode must be gateway when OAuth metadata protects multiple named backends");
+  });
+
+  it("rejects path-scoped resource identifiers in gateway mode", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "gateway"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+
+[oauth.resource]
+enabled = true
+mode = "gateway"
+resource = "https://levitate.example.com/notes/mcp"
+authorization_servers = ["https://auth.example.com"]
+`)).toThrow("oauth.resource.resource must be an origin without a path in gateway mode");
+  });
+
+  it("rejects one metadata URL override in gateway mode", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "gateway"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+
+[oauth.resource]
+enabled = true
+mode = "gateway"
+resource = "https://levitate.example.com"
+authorization_servers = ["https://auth.example.com"]
+metadata_url = "https://levitate.example.com/.well-known/oauth-protected-resource"
+`)).toThrow("oauth.resource.metadata_url cannot override per-backend metadata URLs in gateway mode");
   });
 
   it("rejects enabled oauth protected resource metadata without a resource", () => {
