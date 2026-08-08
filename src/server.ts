@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import type { ServerType } from "@hono/node-server";
@@ -10,6 +11,12 @@ import type { Logger } from "./logging.js";
 import type { StdioMcpBackend } from "./mcp/backend.js";
 import { handleMcpRequest } from "./mcp/proxy.js";
 import type { OAuthAuthorizationServer } from "./oauth/as/routes.js";
+
+const LEVITATE_ICON_PATH = "/assets/levitate-icon-64.png";
+const LEVITATE_ICON_FILES = [
+  new URL("../assets/levitate-icon-64.png", import.meta.url),
+  new URL("../../assets/levitate-icon-64.png", import.meta.url),
+];
 
 export interface AppContext {
   config: LevitateConfig;
@@ -87,6 +94,20 @@ export function createApp(context: AppContext): Hono<AppEnv> {
     }, ready ? 200 : 503);
   });
 
+  app.get(LEVITATE_ICON_PATH, async (c) => {
+    for (const iconUrl of LEVITATE_ICON_FILES) {
+      try {
+        return c.body(await readFile(iconUrl), 200, {
+          "cache-control": "public, max-age=3600",
+          "content-type": "image/png",
+        });
+      } catch {
+        // Try source and compiled module layouts before returning 404.
+      }
+    }
+    return c.notFound();
+  });
+
   if (context.config.oauth.resource.enabled) {
     const serveProtectedResourceMetadata = (c: Context<AppEnv>) => {
       const resource = context.config.oauth.resource;
@@ -98,9 +119,10 @@ export function createApp(context: AppContext): Hono<AppEnv> {
       });
     };
     app.get("/.well-known/oauth-protected-resource", serveProtectedResourceMetadata);
-    const pathScopedRoute = getPathScopedResourceMetadataPath(context.config);
-    if (pathScopedRoute !== "/.well-known/oauth-protected-resource") {
-      app.get(pathScopedRoute, serveProtectedResourceMetadata);
+    for (const pathScopedRoute of getPathScopedResourceMetadataPaths(context.config, backends)) {
+      if (pathScopedRoute !== "/.well-known/oauth-protected-resource") {
+        app.get(pathScopedRoute, serveProtectedResourceMetadata);
+      }
     }
   }
 
@@ -117,7 +139,10 @@ export function createApp(context: AppContext): Hono<AppEnv> {
         message,
         requestId: c.get("requestId"),
       });
-      const resourceMetadataUrl = getResourceMetadataUrl(context.config);
+      const resourceMetadataUrl = getResourceMetadataUrl(
+        context.config,
+        runtime.config.mcp_path,
+      );
       if (resourceMetadataUrl) {
         c.header("WWW-Authenticate", `Bearer resource_metadata="${resourceMetadataUrl}"`);
       }
@@ -134,6 +159,7 @@ export function createApp(context: AppContext): Hono<AppEnv> {
     });
     return handleMcpRequest(c.req.raw, {
       serverName: runtime.config.name,
+      serverIconUrl: getServerIconUrl(context.config, c.req.url),
       instructions: runtime.instructions,
       backend: runtime.backend,
       policy: runtime.config.tools,
@@ -163,22 +189,45 @@ export function startHttpServer(context: AppContext): ServerType {
   });
 }
 
-function getResourceMetadataUrl(config: LevitateConfig): string | undefined {
+function getServerIconUrl(config: LevitateConfig, requestUrl: string): string {
+  const configuredResource = config.oauth.resource.resource;
+  const origin = configuredResource
+    ? new URL(configuredResource).origin
+    : new URL(requestUrl).origin;
+  return new URL(LEVITATE_ICON_PATH, origin).toString();
+}
+
+function getResourceMetadataUrl(
+  config: LevitateConfig,
+  backendPath: string,
+): string | undefined {
   const resource = config.oauth.resource;
   if (!resource.enabled || !resource.resource) return undefined;
   if (resource.metadata_url) return resource.metadata_url;
   const url = new URL(resource.resource);
-  url.pathname = getPathScopedResourceMetadataPath(config);
+  const protectedPath = resource.mode === "gateway"
+    ? backendPath
+    : url.pathname;
+  url.pathname = getPathScopedResourceMetadataPath(protectedPath);
   url.search = "";
   url.hash = "";
   return url.toString();
 }
 
-function getPathScopedResourceMetadataPath(config: LevitateConfig): string {
+function getPathScopedResourceMetadataPaths(
+  config: LevitateConfig,
+  backends: BackendRuntime[],
+): string[] {
   const resourceUrl = config.oauth.resource.resource;
-  if (!resourceUrl) return "/.well-known/oauth-protected-resource";
-  const resourcePath = new URL(resourceUrl).pathname;
-  return resourcePath === "/"
+  if (!resourceUrl) return ["/.well-known/oauth-protected-resource"];
+  const protectedPaths = config.oauth.resource.mode === "gateway"
+    ? backends.map((runtime) => runtime.config.mcp_path)
+    : [new URL(resourceUrl).pathname];
+  return [...new Set(protectedPaths.map(getPathScopedResourceMetadataPath))];
+}
+
+function getPathScopedResourceMetadataPath(protectedPath: string): string {
+  return protectedPath === "/"
     ? "/.well-known/oauth-protected-resource"
-    : `/.well-known/oauth-protected-resource${resourcePath}`;
+    : `/.well-known/oauth-protected-resource${protectedPath}`;
 }

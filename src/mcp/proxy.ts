@@ -7,9 +7,11 @@ import {
 import type { StdioMcpBackend } from "./backend.js";
 import { deniedReason, filterTools, type ToolPolicy } from "./policy.js";
 import type { Logger } from "../logging.js";
+import { LEVITATE_VERSION } from "../version.js";
 
 export interface ProxyOptions {
   serverName: string;
+  serverIconUrl?: string;
   instructions?: string;
   backend: StdioMcpBackend;
   policy: ToolPolicy;
@@ -30,7 +32,20 @@ export async function handleMcpRequest(
 
 export function createProxyServer(options: ProxyOptions): Server {
   const server = new Server(
-    { name: options.serverName, version: "0.1.0" },
+    {
+      name: options.serverName,
+      title: `Levitate / ${options.serverName}`,
+      version: LEVITATE_VERSION,
+      description: "MCP endpoint exposed through Levitate.",
+      websiteUrl: "https://github.com/iomz/levitate",
+      icons: options.serverIconUrl
+        ? [{
+            src: options.serverIconUrl,
+            mimeType: "image/png",
+            sizes: ["64x64"],
+          }]
+        : undefined,
+    },
     {
       capabilities: { tools: {} },
       instructions: options.instructions,

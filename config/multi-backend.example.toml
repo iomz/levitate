@@ -1,5 +1,5 @@
 # One gateway exposing two independent stdio MCP servers.
-# Multi-backend mode currently supports static bearer or external OIDC auth.
+# This example uses static bearer auth. See oauth-gateway.example.toml for local OAuth.
 
 [server]
 name = "example-multi-backend"

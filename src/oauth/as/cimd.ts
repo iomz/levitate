@@ -211,6 +211,7 @@ function validateDocument(
   return {
     client_id: clientId,
     client_name: document.client_name,
+    registration_method: "cimd",
     redirect_uris: document.redirect_uris as string[],
     grant_types: ["authorization_code"],
     response_types: ["code"],

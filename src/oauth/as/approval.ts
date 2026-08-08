@@ -5,6 +5,7 @@ export interface PendingAuthorization {
   id: string;
   clientId: string;
   clientName?: string;
+  registrationMethod: "cimd" | "dcr";
   redirectUri: string;
   resource: string;
   scopes: string[];
@@ -78,6 +79,9 @@ export function renderApprovalPage(
     .map((scope) => `<li>${escapeHtml(scope)}</li>`)
     .join("");
   const errorBlock = error ? `<p class="error">${escapeHtml(error)}</p>` : "";
+  const registrationMethod = pending.registrationMethod === "cimd"
+    ? "Client ID Metadata Document (CIMD)"
+    : "Dynamic Client Registration";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -281,7 +285,7 @@ export function renderApprovalPage(
         <dt>Scopes</dt>
         <dd><ul>${scopes}</ul></dd>
         <dt>Registration</dt>
-        <dd>Dynamic Client Registration</dd>
+        <dd>${registrationMethod}</dd>
       </dl>
       ${errorBlock}
       <form method="post" action="/oauth/approval/${escapeHtml(pending.id)}">

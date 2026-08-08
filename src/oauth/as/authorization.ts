@@ -94,6 +94,7 @@ export function registerAuthorizationRoutes(app: Hono, config: LevitateConfig, c
       id: randomUUID(),
       clientId: client.client_id,
       clientName: client.client_name,
+      registrationMethod: client.registration_method ?? "dcr",
       redirectUri,
       resource,
       scopes,

@@ -1,0 +1,80 @@
+# One local OAuth identity protecting every named MCP backend in this gateway.
+# Generate the RSA key before startup and set LEVITATE_APPROVAL_SECRET.
+
+[server]
+name = "example-oauth-gateway"
+host = "127.0.0.1"
+port = 8787
+
+[server.cors]
+allowed_origins = ["https://chatgpt.com"]
+
+[auth]
+mode = "levitate"
+
+[oauth.resource]
+enabled = true
+mode = "gateway"
+resource = "https://levitate.example.com"
+authorization_servers = ["https://levitate.example.com"]
+scopes_supported = ["gateway:access"]
+
+[oauth.as]
+enabled = true
+issuer = "https://levitate.example.com"
+subject = "local-owner"
+approval = "manual"
+approval_secret_env = "LEVITATE_APPROVAL_SECRET"
+allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
+scopes_supported = ["gateway:access"]
+default_scopes = ["gateway:access"]
+access_token_ttl_seconds = 900
+authorization_code_ttl_seconds = 300
+client_store_file = "state/oauth-clients.json"
+
+[oauth.as.dcr]
+enabled = false
+
+[oauth.as.cimd]
+enabled = true
+allowed_client_id_prefixes = ["https://chatgpt.com/"]
+
+[oauth.as.keys]
+private_key_file = "state/oauth-private-key.pem"
+key_id = "example-gateway-1"
+
+[oauth.as.rate_limits]
+window_seconds = 60
+registration = 10
+authorization = 30
+token = 60
+approval = 10
+
+[backends.notes]
+name = "notes"
+mcp_path = "/notes/mcp"
+
+[backends.notes.stdio]
+command = "node"
+args = ["test/fixtures/fake-stdio-server.mjs"]
+
+[backends.notes.instructions]
+text = "Read-only notes endpoint."
+
+[backends.notes.tools]
+allow = ["fake_allowed"]
+deny = ["fake_denied"]
+
+[backends.admin]
+name = "admin"
+mcp_path = "/admin/mcp"
+
+[backends.admin.stdio]
+command = "node"
+args = ["test/fixtures/fake-stdio-server.mjs"]
+
+[backends.admin.instructions]
+text = "Restricted administrative endpoint."
+
+[backends.admin.tools]
+allow = ["fake_denied"]
