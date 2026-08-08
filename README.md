@@ -343,7 +343,7 @@ ChatGPT
 ```
 
 CIMD is preferred and advertised through authorization-server metadata when enabled.
-Only HTTPS client IDs matching `oauth.as.cimd.allowed_client_id_prefixes` are fetched; redirects are rejected, response size and time are bounded, and documents must identify themselves exactly.
+Only HTTPS client IDs matching `oauth.as.cimd.allowed_client_id_prefixes` are fetched; redirects are rejected, response size, time, fetch rate, and cache cardinality are bounded, and documents must identify themselves exactly.
 CIMD redirect URIs must also match `oauth.as.allowed_redirect_uri_prefixes`, and CIMD clients remain external rather than being persisted in Levitate's client store.
 Dynamic Client Registration remains an optional fallback and accepts public clients only.
 Registered redirect URIs must be absolute HTTPS URLs and match `oauth.as.allowed_redirect_uri_prefixes`.

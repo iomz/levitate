@@ -426,6 +426,44 @@ describe("mcp endpoint", () => {
     await expect(response.json()).resolves.toEqual({ error: "auth failed" });
   });
 
+  it("preserves trailing slashes in path-scoped resource metadata URLs", async () => {
+    const app = createApp({
+      config: {
+        ...config,
+        server: {
+          ...config.server,
+          mcp_path: "/brain/mcp/",
+        },
+        oauth: {
+          resource: {
+            enabled: true,
+            resource: "https://levitate.example.com/brain/mcp/",
+            authorization_servers: ["https://auth.example.com/"],
+            scopes_supported: ["levitate:read"],
+          },
+          as: config.oauth.as,
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const metadata = await app.fetch(new Request(
+      "http://localhost/.well-known/oauth-protected-resource/brain/mcp/",
+    ));
+    const unauthorized = await app.fetch(new Request("http://localhost/brain/mcp/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    }));
+
+    expect(metadata.status).toBe(200);
+    expect(unauthorized.headers.get("www-authenticate")).toBe(
+      'Bearer resource_metadata="https://levitate.example.com/.well-known/oauth-protected-resource/brain/mcp/"',
+    );
+  });
+
   it("proxies tools through streamable http with policy applied", async () => {
     const app = createApp({
       config,

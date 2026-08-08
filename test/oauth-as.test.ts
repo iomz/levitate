@@ -12,6 +12,7 @@ import { runOAuthClientsCommand } from "../src/oauth/as/clients-cli.js";
 import { loadAuthorizationServerKeys } from "../src/oauth/as/keys.js";
 import { createOAuthAuthorizationServer } from "../src/oauth/as/routes.js";
 import { JsonClientStore } from "../src/oauth/as/store.js";
+import { CimdClientResolver } from "../src/oauth/as/cimd.js";
 import { createApp } from "../src/server.js";
 
 const logger: Logger = {
@@ -198,6 +199,42 @@ describe("oauth authorization server facade", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: "invalid_client" });
+  });
+
+  it("bounds CIMD cache entries and metadata fetches", async () => {
+    const context = createTestConfig({
+      cimdEnabled: true,
+      cimdAllowedClientIdPrefixes: ["https://chatgpt.com/oauth/"],
+    });
+    let fetchCount = 0;
+    const fetchImpl = (async (input: string | URL | Request) => {
+      fetchCount += 1;
+      const clientId = String(input);
+      return new Response(JSON.stringify({
+        client_id: clientId,
+        client_name: "ChatGPT",
+        redirect_uris: ["https://chatgpt.com/connector/oauth/callback"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+      }), {
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "max-age=60",
+        },
+      });
+    }) as typeof fetch;
+    const resolver = new CimdClientResolver(context.config, logger, fetchImpl, {
+      maxCacheEntries: 1,
+      maxFetchesPerMinute: 3,
+    });
+    const first = "https://chatgpt.com/oauth/first.json";
+    const second = "https://chatgpt.com/oauth/second.json";
+
+    expect(await resolver.get(first)).toBeDefined();
+    expect(await resolver.get(second)).toBeDefined();
+    expect(await resolver.get(first)).toBeDefined();
+    expect(await resolver.get("https://chatgpt.com/oauth/blocked.json")).toBeUndefined();
+    expect(fetchCount).toBe(3);
   });
 
   it("keeps existing clients usable when dcr is disabled", async () => {

@@ -177,8 +177,8 @@ function getResourceMetadataUrl(config: LevitateConfig): string | undefined {
 function getPathScopedResourceMetadataPath(config: LevitateConfig): string {
   const resourceUrl = config.oauth.resource.resource;
   if (!resourceUrl) return "/.well-known/oauth-protected-resource";
-  const resourcePath = new URL(resourceUrl).pathname.replace(/^\/+|\/+$/g, "");
-  return resourcePath
-    ? `/.well-known/oauth-protected-resource/${resourcePath}`
-    : "/.well-known/oauth-protected-resource";
+  const resourcePath = new URL(resourceUrl).pathname;
+  return resourcePath === "/"
+    ? "/.well-known/oauth-protected-resource"
+    : `/.well-known/oauth-protected-resource${resourcePath}`;
 }

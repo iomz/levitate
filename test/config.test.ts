@@ -299,6 +299,29 @@ metadata_url = "http://levitate.example.com/.well-known/oauth-protected-resource
 `)).toThrow("OIDC URLs must use https");
   });
 
+  it.each([
+    "https://levitate.example.com/brain/%20/mcp",
+    "https://levitate.example.com/brain/*/mcp",
+    "https://levitate.example.com/brain/:service/mcp",
+  ])("rejects oauth resource paths that cannot be matched literally: %s", (resource) => {
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+
+[oauth.resource]
+enabled = true
+resource = "${resource}"
+authorization_servers = ["https://auth.example.com/"]
+`)).toThrow("oauth.resource.resource must use literal URL-safe path segments without query or fragment");
+  });
+
   it("parses oauth authorization server config", () => {
     const config = parseConfigText(`
 [server]

@@ -7,6 +7,13 @@ const FETCH_TIMEOUT_MS = 3_000;
 const MAX_DOCUMENT_BYTES = 64 * 1024;
 const DEFAULT_CACHE_SECONDS = 300;
 const MAX_CACHE_SECONDS = 3_600;
+const DEFAULT_MAX_CACHE_ENTRIES = 256;
+const DEFAULT_MAX_FETCHES_PER_MINUTE = 60;
+
+interface CimdResolverLimits {
+  maxCacheEntries?: number;
+  maxFetchesPerMinute?: number;
+}
 
 interface CacheEntry {
   client: OAuthClient;
@@ -40,12 +47,20 @@ export class CompositeClientLookup implements ClientLookup {
 
 export class CimdClientResolver implements ClientLookup {
   private readonly cache = new Map<string, CacheEntry>();
+  private readonly maxCacheEntries: number;
+  private readonly maxFetchesPerMinute: number;
+  private fetchWindowStartedAt = Date.now();
+  private fetchesInWindow = 0;
 
   constructor(
     private readonly config: LevitateConfig,
     private readonly logger: Logger,
     private readonly fetchImpl: typeof fetch = fetch,
-  ) {}
+    limits: CimdResolverLimits = {},
+  ) {
+    this.maxCacheEntries = Math.max(1, limits.maxCacheEntries ?? DEFAULT_MAX_CACHE_ENTRIES);
+    this.maxFetchesPerMinute = Math.max(1, limits.maxFetchesPerMinute ?? DEFAULT_MAX_FETCHES_PER_MINUTE);
+  }
 
   async get(clientId: string): Promise<OAuthClient | undefined> {
     const asConfig = this.config.oauth.as;
@@ -53,9 +68,17 @@ export class CimdClientResolver implements ClientLookup {
       return undefined;
     }
 
+    const now = Date.now();
+    this.pruneExpiredCache(now);
     const cached = this.cache.get(clientId);
-    if (cached && cached.expiresAt > Date.now()) return cached.client;
-    this.cache.delete(clientId);
+    if (cached) return cached.client;
+    if (!this.consumeFetchBudget(now)) {
+      this.logger.warn("oauth cimd client rejected", {
+        clientOrigin: new URL(clientId).origin,
+        reason: "fetch_rate_limited",
+      });
+      return undefined;
+    }
 
     try {
       const response = await this.fetchImpl(clientId, {
@@ -79,6 +102,7 @@ export class CimdClientResolver implements ClientLookup {
       const client = validateDocument(clientId, document, this.config);
       const cacheSeconds = getCacheSeconds(response.headers.get("cache-control"));
       if (cacheSeconds > 0) {
+        this.evictCacheEntryIfFull();
         this.cache.set(clientId, {
           client,
           expiresAt: Date.now() + cacheSeconds * 1_000,
@@ -91,6 +115,30 @@ export class CimdClientResolver implements ClientLookup {
         reason: error instanceof Error ? error.message : String(error),
       });
       return undefined;
+    }
+  }
+
+  private consumeFetchBudget(now: number): boolean {
+    if (now >= this.fetchWindowStartedAt + 60_000) {
+      this.fetchWindowStartedAt = now;
+      this.fetchesInWindow = 0;
+    }
+    if (this.fetchesInWindow >= this.maxFetchesPerMinute) return false;
+    this.fetchesInWindow += 1;
+    return true;
+  }
+
+  private pruneExpiredCache(now: number): void {
+    for (const [clientId, entry] of this.cache) {
+      if (entry.expiresAt <= now) this.cache.delete(clientId);
+    }
+  }
+
+  private evictCacheEntryIfFull(): void {
+    while (this.cache.size >= this.maxCacheEntries) {
+      const oldestClientId = this.cache.keys().next().value as string | undefined;
+      if (!oldestClientId) break;
+      this.cache.delete(oldestClientId);
     }
   }
 }

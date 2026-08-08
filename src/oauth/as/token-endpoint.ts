@@ -7,7 +7,7 @@ import type { ClientLookup } from "./store.js";
 import { issueAccessToken } from "./tokens.js";
 import { isValidPkceVerifier, stringFormValue } from "./validation.js";
 import type { OAuthRateLimiter } from "./rate-limit.js";
-import { oauthAudit } from "./audit.js";
+import { oauthAudit, oauthClientAuditFields } from "./audit.js";
 
 export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: AuthorizationServerKeys, clients: ClientLookup, codes: AuthorizationCodeStore, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
   const asConfig = config.oauth.as;
@@ -29,7 +29,7 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
         grantType,
         hasCode: Boolean(code),
         redirectUri,
-        clientId,
+        ...oauthClientAuditFields(clientId),
         hasCodeVerifier: Boolean(codeVerifier),
         resource,
       });
@@ -39,7 +39,10 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
     const retryAfter = rateLimiter?.consume("token", clientId);
     if (retryAfter) {
       c.header("Retry-After", String(retryAfter));
-      logger.warn("oauth audit", { ...oauthAudit(c, "token_exchange", "rate_limited"), clientId });
+      logger.warn("oauth audit", {
+        ...oauthAudit(c, "token_exchange", "rate_limited"),
+        ...oauthClientAuditFields(clientId),
+      });
       return c.json({ error: "temporarily_unavailable" }, 429);
     }
     const client = await clients.get(clientId);
@@ -47,7 +50,7 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
       logger.warn("oauth token request rejected", {
         ...oauthAudit(c, "token_exchange", "rejected"),
         error: "invalid_client",
-        clientId,
+        ...oauthClientAuditFields(clientId),
         hasClient: Boolean(client),
         revoked: Boolean(client?.revoked_at),
       });
@@ -78,8 +81,8 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
       logger.warn("oauth token request rejected", {
         ...oauthAudit(c, "token_exchange", "rejected"),
         error: "invalid_grant",
-        clientId,
-        codeClientId: record.clientId,
+        ...oauthClientAuditFields(clientId),
+        codeClientMatches: record.clientId === clientId,
         redirectUri,
         codeRedirectUri: record.redirectUri,
         resource,
@@ -102,7 +105,7 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
 
     logger.info("oauth audit", {
       ...oauthAudit(c, "token_exchange", "succeeded"),
-      clientId,
+      ...oauthClientAuditFields(clientId),
       scopes: record.scopes,
     });
 

@@ -27,6 +27,15 @@ const HttpsUrlSchema = z.string().url().refine(
   "OIDC URLs must use https",
 );
 
+const OAuthResourceUrlSchema = HttpsUrlSchema.refine((value) => {
+  const url = new URL(value);
+  return (
+    !url.search &&
+    !url.hash &&
+    /^\/(?:[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*\/?)?$/.test(url.pathname)
+  );
+}, "oauth.resource.resource must use literal URL-safe path segments without query or fragment");
+
 const CimdClientIdPrefixSchema = HttpsUrlSchema.refine((value) => {
   const url = new URL(value);
   return !url.username && !url.password && !url.search && !url.hash;
@@ -34,7 +43,7 @@ const CimdClientIdPrefixSchema = HttpsUrlSchema.refine((value) => {
 
 const OAuthResourceSchema = z.object({
   enabled: z.boolean().default(false),
-  resource: HttpsUrlSchema.optional(),
+  resource: OAuthResourceUrlSchema.optional(),
   authorization_servers: z.array(HttpsUrlSchema).default([]),
   scopes_supported: z.array(z.string().min(1)).default([]),
   metadata_url: HttpsUrlSchema.optional(),
