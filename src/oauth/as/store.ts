@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
-export interface RegisteredClient {
+export interface OAuthClient {
   client_id: string;
   client_name?: string;
   redirect_uris: string[];
@@ -10,17 +10,23 @@ export interface RegisteredClient {
   response_types: string[];
   token_endpoint_auth_method: "none";
   scope?: string;
-  created_at: string;
   revoked_at?: string;
+}
+
+export interface RegisteredClient extends OAuthClient {
+  created_at: string;
 }
 
 interface ClientStoreFile {
   clients: RegisteredClient[];
 }
 
-export interface ClientStore {
+export interface ClientLookup {
+  get(clientId: string): Promise<OAuthClient | undefined>;
+}
+
+export interface ClientStore extends ClientLookup {
   add(client: Omit<RegisteredClient, "client_id" | "created_at">): Promise<RegisteredClient>;
-  get(clientId: string): Promise<RegisteredClient | undefined>;
   list(): Promise<RegisteredClient[]>;
   revoke(clientId: string): Promise<RegisteredClient | undefined>;
 }

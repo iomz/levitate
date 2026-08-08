@@ -3,13 +3,13 @@ import type { LevitateConfig } from "../../config.js";
 import type { Logger } from "../../logging.js";
 import { AuthorizationCodeStore, verifyPkceS256 } from "./codes.js";
 import type { AuthorizationServerKeys } from "./keys.js";
-import type { ClientStore } from "./store.js";
+import type { ClientLookup } from "./store.js";
 import { issueAccessToken } from "./tokens.js";
 import { isValidPkceVerifier, stringFormValue } from "./validation.js";
 import type { OAuthRateLimiter } from "./rate-limit.js";
-import { oauthAudit } from "./audit.js";
+import { oauthAudit, oauthClientAuditFields } from "./audit.js";
 
-export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: AuthorizationServerKeys, clients: ClientStore, codes: AuthorizationCodeStore, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
+export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: AuthorizationServerKeys, clients: ClientLookup, codes: AuthorizationCodeStore, logger: Logger, rateLimiter?: OAuthRateLimiter): void {
   const asConfig = config.oauth.as;
   app.post("/oauth/token", async (c) => {
     const form = await c.req.parseBody();
@@ -29,31 +29,33 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
         grantType,
         hasCode: Boolean(code),
         redirectUri,
-        clientId,
+        ...oauthClientAuditFields(clientId),
         hasCodeVerifier: Boolean(codeVerifier),
         resource,
       });
       return c.json({ error: "invalid_request" }, 400);
     }
 
+    const retryAfter = rateLimiter?.consume("token", clientId);
+    if (retryAfter) {
+      c.header("Retry-After", String(retryAfter));
+      logger.warn("oauth audit", {
+        ...oauthAudit(c, "token_exchange", "rate_limited"),
+        ...oauthClientAuditFields(clientId),
+      });
+      return c.json({ error: "temporarily_unavailable" }, 429);
+    }
     const client = await clients.get(clientId);
     if (!client || client.revoked_at) {
       logger.warn("oauth token request rejected", {
         ...oauthAudit(c, "token_exchange", "rejected"),
         error: "invalid_client",
-        clientId,
+        ...oauthClientAuditFields(clientId),
         hasClient: Boolean(client),
         revoked: Boolean(client?.revoked_at),
       });
       return c.json({ error: "invalid_client" }, 400);
     }
-    const retryAfter = rateLimiter?.consume("token", client.client_id);
-    if (retryAfter) {
-      c.header("Retry-After", String(retryAfter));
-      logger.warn("oauth audit", { ...oauthAudit(c, "token_exchange", "rate_limited"), clientId });
-      return c.json({ error: "temporarily_unavailable" }, 429);
-    }
-
     let record;
     try {
       record = codes.get(code);
@@ -79,8 +81,8 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
       logger.warn("oauth token request rejected", {
         ...oauthAudit(c, "token_exchange", "rejected"),
         error: "invalid_grant",
-        clientId,
-        codeClientId: record.clientId,
+        ...oauthClientAuditFields(clientId),
+        codeClientMatches: record.clientId === clientId,
         redirectUri,
         codeRedirectUri: record.redirectUri,
         resource,
@@ -103,7 +105,7 @@ export function registerTokenRoute(app: Hono, config: LevitateConfig, keys: Auth
 
     logger.info("oauth audit", {
       ...oauthAudit(c, "token_exchange", "succeeded"),
-      clientId,
+      ...oauthClientAuditFields(clientId),
       scopes: record.scopes,
     });
 

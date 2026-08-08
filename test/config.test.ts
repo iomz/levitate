@@ -299,6 +299,29 @@ metadata_url = "http://levitate.example.com/.well-known/oauth-protected-resource
 `)).toThrow("OIDC URLs must use https");
   });
 
+  it.each([
+    "https://levitate.example.com/brain/%20/mcp",
+    "https://levitate.example.com/brain/*/mcp",
+    "https://levitate.example.com/brain/:service/mcp",
+  ])("rejects oauth resource paths that cannot be matched literally: %s", (resource) => {
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+
+[oauth.resource]
+enabled = true
+resource = "${resource}"
+authorization_servers = ["https://auth.example.com/"]
+`)).toThrow("oauth.resource.resource must use literal URL-safe path segments without query or fragment");
+  });
+
   it("parses oauth authorization server config", () => {
     const config = parseConfigText(`
 [server]
@@ -332,7 +355,16 @@ key_id = "levitate-local-1"
 
 [oauth.as.dcr]
 enabled = true
+
+[oauth.as.cimd]
+enabled = true
+allowed_client_id_prefixes = ["https://chatgpt.com/oauth/"]
 `);
+
+    expect(config.oauth.as.cimd).toEqual({
+      enabled: true,
+      allowed_client_id_prefixes: ["https://chatgpt.com/oauth/"],
+    });
 
     expect(config.auth.mode).toBe("levitate");
     expect(config.oauth.as.enabled).toBe(true);
@@ -356,6 +388,41 @@ mode = "levitate"
 [oauth.as]
 enabled = true
 `)).toThrow("oauth.as.issuer is required when oauth.as.enabled is true");
+  });
+
+  it("rejects CIMD without an allowed client ID prefix", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "brain"
+
+[stdio]
+command = "node"
+
+[auth]
+mode = "levitate"
+
+[oauth.resource]
+enabled = true
+resource = "https://levitate.example.com/brain/mcp"
+authorization_servers = ["https://levitate.example.com"]
+scopes_supported = ["brain:read"]
+
+[oauth.as]
+enabled = true
+issuer = "https://levitate.example.com"
+subject = "local-user"
+allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
+scopes_supported = ["brain:read"]
+default_scopes = ["brain:read"]
+client_store_file = "state/oauth-clients.json"
+
+[oauth.as.cimd]
+enabled = true
+
+[oauth.as.keys]
+private_key_file = "state/oauth-private-key.pem"
+key_id = "levitate-local-1"
+`)).toThrow("oauth.as.cimd.allowed_client_id_prefixes must be non-empty when oauth.as.cimd.enabled is true");
   });
 
   it("rejects oauth authorization server default scopes outside supported scopes", () => {

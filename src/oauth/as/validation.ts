@@ -1,5 +1,5 @@
 import type { LevitateConfig } from "../../config.js";
-import type { RegisteredClient } from "./store.js";
+import type { OAuthClient } from "./store.js";
 
 export interface RegisterRequest {
   client_name?: unknown;
@@ -64,14 +64,27 @@ export function validateRegistration(
 }
 
 export function isAllowedRedirectUri(uri: string, config: LevitateConfig): boolean {
+  return matchesHttpsUrlPrefix(
+    uri,
+    config.oauth.as.allowed_redirect_uri_prefixes,
+  );
+}
+
+export function matchesHttpsUrlPrefix(value: string, prefixes: string[]): boolean {
   let parsed: URL;
   try {
-    parsed = new URL(uri);
+    parsed = new URL(value);
   } catch {
     return false;
   }
-  if (parsed.protocol !== "https:") return false;
-  return config.oauth.as.allowed_redirect_uri_prefixes.some((prefix) => {
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.hash
+  )
+    return false;
+  return prefixes.some((prefix) => {
     let allowed: URL;
     try {
       allowed = new URL(prefix);
@@ -88,7 +101,7 @@ export function isAllowedRedirectUri(uri: string, config: LevitateConfig): boole
 }
 
 export function isExactRegisteredRedirectUri(
-  client: RegisteredClient,
+  client: OAuthClient,
   redirectUri: string,
 ): boolean {
   return client.redirect_uris.includes(redirectUri);
@@ -97,7 +110,7 @@ export function isExactRegisteredRedirectUri(
 export function parseRequestedScopes(
   scope: string | null,
   config: LevitateConfig,
-  client: RegisteredClient,
+  client: OAuthClient,
 ): string[] | undefined {
   const requested = scope
     ? scope
@@ -156,4 +169,3 @@ function isSupportedGrantTypes(value: unknown): boolean {
     value.length === 1 && value[0] === "authorization_code"
   );
 }
-

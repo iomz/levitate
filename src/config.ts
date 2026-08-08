@@ -27,9 +27,23 @@ const HttpsUrlSchema = z.string().url().refine(
   "OIDC URLs must use https",
 );
 
+const OAuthResourceUrlSchema = HttpsUrlSchema.refine((value) => {
+  const url = new URL(value);
+  return (
+    !url.search &&
+    !url.hash &&
+    /^\/(?:[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*\/?)?$/.test(url.pathname)
+  );
+}, "oauth.resource.resource must use literal URL-safe path segments without query or fragment");
+
+const CimdClientIdPrefixSchema = HttpsUrlSchema.refine((value) => {
+  const url = new URL(value);
+  return !url.username && !url.password && !url.search && !url.hash;
+}, "oauth.as.cimd.allowed_client_id_prefixes must not contain credentials, query strings, or fragments");
+
 const OAuthResourceSchema = z.object({
   enabled: z.boolean().default(false),
-  resource: HttpsUrlSchema.optional(),
+  resource: OAuthResourceUrlSchema.optional(),
   authorization_servers: z.array(HttpsUrlSchema).default([]),
   scopes_supported: z.array(z.string().min(1)).default([]),
   metadata_url: HttpsUrlSchema.optional(),
@@ -62,6 +76,10 @@ const OAuthAuthorizationServerSchema = z.object({
   dcr: z.object({
     enabled: z.boolean().default(false),
   }).default({ enabled: false }),
+  cimd: z.object({
+    enabled: z.boolean().default(false),
+    allowed_client_id_prefixes: z.array(CimdClientIdPrefixSchema).default([]),
+  }).default({ enabled: false, allowed_client_id_prefixes: [] }),
   rate_limits: z.object({
     window_seconds: z.coerce.number().int().positive().default(60),
     registration: z.coerce.number().int().positive().default(10),
@@ -127,6 +145,14 @@ const OAuthAuthorizationServerSchema = z.object({
       code: z.ZodIssueCode.custom,
       message: "oauth.as.default_scopes must be non-empty when oauth.as.enabled is true",
       path: ["default_scopes"],
+    });
+  }
+
+  if (value.cimd.enabled && !value.cimd.allowed_client_id_prefixes.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "oauth.as.cimd.allowed_client_id_prefixes must be non-empty when oauth.as.cimd.enabled is true",
+      path: ["cimd", "allowed_client_id_prefixes"],
     });
   }
 

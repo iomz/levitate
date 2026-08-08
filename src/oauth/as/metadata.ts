@@ -31,6 +31,9 @@ export function registerMetadataRoutes(app: Hono, config: LevitateConfig, keys: 
         issuer,
       ).toString();
     }
+    if (asConfig.cimd.enabled) {
+      metadata.client_id_metadata_document_supported = true;
+    }
     return c.json(metadata);
   });
 

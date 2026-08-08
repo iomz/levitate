@@ -238,9 +238,11 @@ When enabled, Levitate serves:
 
 ```text
 GET /.well-known/oauth-protected-resource
+GET /.well-known/oauth-protected-resource/brain/mcp
 ```
 
-The response includes the configured resource URL, authorization server list, `bearer_methods_supported = ["header"]`, and configured scopes.
+The path-scoped route follows the configured public resource path; the root route remains available for compatibility.
+Both responses include the configured resource URL, authorization server list, `bearer_methods_supported = ["header"]`, and configured scopes.
 `resource` is the canonical public MCP endpoint URL and must be configured explicitly.
 Levitate does not derive it from issuer, audience, request host, or local bind address.
 
@@ -253,16 +255,16 @@ Unauthenticated or invalid-auth MCP requests keep the generic JSON body:
 When protected resource metadata is enabled, the same `401` response includes:
 
 ```http
-WWW-Authenticate: Bearer resource_metadata="https://levitate.example.com/.well-known/oauth-protected-resource"
+WWW-Authenticate: Bearer resource_metadata="https://levitate.example.com/.well-known/oauth-protected-resource/brain/mcp"
 ```
 
-By default, Levitate derives that metadata URL from the configured resource origin.
+By default, Levitate derives that path-scoped metadata URL from the configured resource URL.
 Set `oauth.resource.metadata_url` only when the public metadata URL needs an explicit override.
 
 ### Local OAuth authorization server facade
 
 Levitate can run a private local OAuth authorization server facade for ChatGPT Custom MCP registration.
-This exposes discovery, Dynamic Client Registration, authorization-code with PKCE, token issuance, and JWKS endpoints through the same HTTP server.
+This exposes discovery, Client ID Metadata Document (CIMD) resolution, optional Dynamic Client Registration, authorization-code with PKCE, token issuance, and JWKS endpoints through the same HTTP server.
 Use this only for private deployments that still require authenticated MCP requests.
 Do not expose private local tools without auth and strict redirect URI configuration.
 
@@ -296,7 +298,11 @@ private_key_file = "state/oauth-private-key.pem"
 key_id = "levitate-local-1"
 
 [oauth.as.dcr]
+enabled = false
+
+[oauth.as.cimd]
 enabled = true
+allowed_client_id_prefixes = ["https://chatgpt.com/"]
 
 [oauth.as.rate_limits]
 window_seconds = 60
@@ -327,15 +333,19 @@ ChatGPT Custom MCP flow:
 
 ```text
 ChatGPT
-  -> reads /.well-known/oauth-protected-resource
+  -> reads /.well-known/oauth-protected-resource/brain/mcp
   -> reads /.well-known/oauth-authorization-server
-  -> registers a public client at /oauth/register
+  -> supplies an HTTPS client_id that points to its metadata document
+  -> Levitate fetches and validates that allowlisted document
   -> completes authorization_code + PKCE through /oauth/authorize and /oauth/token
   -> receives a Levitate-issued RS256 JWT access token
   -> calls the configured MCP endpoint with Authorization: Bearer <token>
 ```
 
-Dynamic Client Registration accepts public clients only.
+CIMD is preferred and advertised through authorization-server metadata when enabled.
+Only HTTPS client IDs matching `oauth.as.cimd.allowed_client_id_prefixes` are fetched; redirects are rejected, response size, time, fetch rate, and cache cardinality are bounded, and documents must identify themselves exactly.
+CIMD redirect URIs must also match `oauth.as.allowed_redirect_uri_prefixes`, and CIMD clients remain external rather than being persisted in Levitate's client store.
+Dynamic Client Registration remains an optional fallback and accepts public clients only.
 Registered redirect URIs must be absolute HTTPS URLs and match `oauth.as.allowed_redirect_uri_prefixes`.
 Levitate does not issue client secrets.
 Authorization codes are short-lived, single-use, and stored in memory only.
@@ -359,12 +369,12 @@ Changing the private key or key ID invalidates every token signed by the previou
 Safe current rotation procedure is: stop Levitate, replace the key file, change `oauth.as.keys.key_id`, restart Levitate, then reauthorize clients.
 Overlapping old/new verification keys and zero-interruption rotation are not implemented.
 
-DCR is closed by default.
-Temporarily set `[oauth.as.dcr] enabled = true` while installing a ChatGPT Custom App, then set it back to `false` after the client appears in `oauth.as.client_store_file`.
+DCR is closed by default and is unnecessary when client supports CIMD.
+For clients without CIMD support, temporarily set `[oauth.as.dcr] enabled = true` while installing, then set it back to `false` after client appears in `oauth.as.client_store_file`.
 Existing registered clients can still authorize and exchange tokens while DCR is disabled.
 
 OAuth rate limits are optional and process-local.
-When configured, registration uses one gateway-wide bucket while authorization, token, and approval requests use client-specific buckets where a validated client identifier is available.
+When configured, registration uses one gateway-wide bucket while authorization, token, and approval requests use client-specific buckets keyed by submitted client identifier.
 Exceeded limits return `429` with `Retry-After` and do not log submitted secrets, codes, tokens, or PKCE verifiers.
 Multi-node deployments require a shared limiter design before these limits can provide deployment-wide enforcement.
 OAuth security logs include stable `event`, `outcome`, and `requestId` fields for registration, authorization, approval, and token exchange.
@@ -398,7 +408,7 @@ Access tokens are RS256 JWTs with `iss`, `sub`, `aud`, `scope`, `exp`, `iat`, an
 `auth.mode = "levitate"` validates only Levitate-issued JWTs against the configured issuer, resource audience, public key, expiration, algorithm, and client ID claim.
 Existing `auth.mode = "oidc"` remains available separately for Auth0 and other external RS256 JWKS-backed issuers.
 
-Auth0-backed Dynamic Client Registration, CIMD, refresh tokens, hosted login UI, and multi-user management are not implemented.
+Auth0-backed Dynamic Client Registration, refresh tokens, `private_key_jwt`, hosted login UI, and multi-user management are not implemented.
 
 ## Tool Policy
 

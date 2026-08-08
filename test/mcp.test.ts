@@ -53,6 +53,10 @@ const config: LevitateConfig = {
       dcr: {
         enabled: false,
       },
+      cimd: {
+        enabled: false,
+        allowed_client_id_prefixes: [],
+      },
       allowed_redirect_uri_prefixes: [],
       scopes_supported: [],
       default_scopes: [],
@@ -366,9 +370,19 @@ describe("mcp endpoint", () => {
     });
 
     const response = await app.fetch(new Request("http://localhost/.well-known/oauth-protected-resource"));
+    const pathScopedResponse = await app.fetch(new Request(
+      "http://localhost/.well-known/oauth-protected-resource/brain/mcp",
+    ));
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
+      resource: "https://levitate.example.com/brain/mcp",
+      authorization_servers: ["https://auth.example.com/"],
+      bearer_methods_supported: ["header"],
+      scopes_supported: ["levitate:read", "levitate:call"],
+    });
+    expect(pathScopedResponse.status).toBe(200);
+    await expect(pathScopedResponse.json()).resolves.toEqual({
       resource: "https://levitate.example.com/brain/mcp",
       authorization_servers: ["https://auth.example.com/"],
       bearer_methods_supported: ["header"],
@@ -407,9 +421,47 @@ describe("mcp endpoint", () => {
 
     expect(response.status).toBe(401);
     expect(response.headers.get("www-authenticate")).toBe(
-      'Bearer resource_metadata="https://levitate.example.com/.well-known/oauth-protected-resource"',
+      'Bearer resource_metadata="https://levitate.example.com/.well-known/oauth-protected-resource/brain/mcp"',
     );
     await expect(response.json()).resolves.toEqual({ error: "auth failed" });
+  });
+
+  it("preserves trailing slashes in path-scoped resource metadata URLs", async () => {
+    const app = createApp({
+      config: {
+        ...config,
+        server: {
+          ...config.server,
+          mcp_path: "/brain/mcp/",
+        },
+        oauth: {
+          resource: {
+            enabled: true,
+            resource: "https://levitate.example.com/brain/mcp/",
+            authorization_servers: ["https://auth.example.com/"],
+            scopes_supported: ["levitate:read"],
+          },
+          as: config.oauth.as,
+        },
+      },
+      authenticator: new BearerAuthenticator("secret"),
+      backend,
+      logger,
+    });
+
+    const metadata = await app.fetch(new Request(
+      "http://localhost/.well-known/oauth-protected-resource/brain/mcp/",
+    ));
+    const unauthorized = await app.fetch(new Request("http://localhost/brain/mcp/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    }));
+
+    expect(metadata.status).toBe(200);
+    expect(unauthorized.headers.get("www-authenticate")).toBe(
+      'Bearer resource_metadata="https://levitate.example.com/.well-known/oauth-protected-resource/brain/mcp/"',
+    );
   });
 
   it("proxies tools through streamable http with policy applied", async () => {
