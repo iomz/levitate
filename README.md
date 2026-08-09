@@ -51,7 +51,8 @@ Levitate can also issue gateway tokens through its local OAuth server for privat
 MCP servers can read or modify private data, and tunnel-published endpoints are public unless protected.
 `GET /health` reports process liveness and `GET /ready` reports backend readiness.
 Both endpoints are unauthenticated for deployment checks; MCP endpoints require bearer authentication.
-Shutdown stops accepting HTTP traffic, gives existing connections one second to close, then force-closes persistent connections before exiting.
+Shutdown stops accepting HTTP traffic, gives existing connections one second to close, then force-closes all remaining HTTP connections before exiting.
+In-flight requests may terminate after this grace period.
 
 See [Authentication](AUTHENTICATION.md) before publishing Levitate through a tunnel or reverse proxy.
 

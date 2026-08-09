@@ -71,9 +71,9 @@ https://${AUTH0_DOMAIN}/oauth/token
 
 See [`config/oidc.example.toml`](config/oidc.example.toml).
 
-## OAuth protected resource metadata
+## OAuth-protected resource metadata
 
-Levitate can serve OAuth protected resource metadata for remote MCP hosts that discover authorization details from the resource server:
+Levitate can serve OAuth-protected resource metadata for remote MCP hosts that discover authorization details from the resource server:
 
 ```toml
 [oauth.resource]
@@ -277,12 +277,16 @@ Generate an approval secret:
 export LEVITATE_APPROVAL_SECRET="$(openssl rand -base64 32)"
 ```
 
-Manage registered clients from the same config:
+Copy the local OAuth example to an ignored local config, configure it, then manage registered clients from that same file:
 
 ```sh
-levitate oauth clients list --config config/example.local.toml
-levitate oauth clients show <client_id> --config config/example.local.toml
-levitate oauth clients revoke <client_id> --config config/example.local.toml
+cp config/oauth-as.example.toml config/oauth-as.local.toml
+```
+
+```sh
+levitate oauth clients list --config config/oauth-as.local.toml
+levitate oauth clients show <client_id> --config config/oauth-as.local.toml
+levitate oauth clients revoke <client_id> --config config/oauth-as.local.toml
 ```
 
 Client revocation blocks new authorization requests and token exchanges, including exchanges using authorization codes issued before revocation.
