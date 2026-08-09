@@ -8,3 +8,8 @@ state/
 # Local/private configs
 config/local.*.toml
 config/*.local.toml
+
+# Local/private Docker Compose profiles
+compose.*.local.yml
+compose.*.local.yaml
+Dockerfile.*.local
