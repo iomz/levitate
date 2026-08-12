@@ -31,8 +31,10 @@ allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
 scopes_supported = ["example:read", "example:write"]
 default_scopes = ["example:read"]
 access_token_ttl_seconds = 900
+refresh_token_ttl_seconds = 2592000
 authorization_code_ttl_seconds = 300
 client_store_file = "state/oauth-clients.json"
+refresh_token_store_file = "state/oauth-refresh-tokens.json"
 
 [oauth.as.dcr]
 enabled = false
