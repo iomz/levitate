@@ -82,7 +82,7 @@ describe("oauth authorization server facade", () => {
       registration_endpoint: "https://levitate.example.com/oauth/register",
       jwks_uri: "https://levitate.example.com/.well-known/jwks.json",
       response_types_supported: ["code"],
-      grant_types_supported: ["authorization_code"],
+      grant_types_supported: ["authorization_code", "refresh_token"],
       token_endpoint_auth_methods_supported: ["none"],
       code_challenge_methods_supported: ["S256"],
       scopes_supported: ["brain:read", "brain:write"],
@@ -399,13 +399,15 @@ describe("oauth authorization server facade", () => {
     expect(client.token_endpoint_auth_method).toBe("none");
   });
 
-  it("rejects unsupported refresh-token registration metadata", async () => {
+  it("accepts refresh-token registration metadata", async () => {
     const context = await createTestApp();
     const response = await registerClient(context.app, {
       grant_types: ["authorization_code", "refresh_token"],
     });
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "invalid_client_metadata" });
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      grant_types: ["authorization_code", "refresh_token"],
+    }));
   });
 
   it("lists, shows, and revokes clients with the management command", async () => {
@@ -801,6 +803,125 @@ describe("oauth authorization server facade", () => {
     });
   });
 
+  it("rotates persistent refresh tokens without repeating approval", async () => {
+    const context = await createTestApp();
+    const client = await registerAndReadClient(context.app, {
+      grant_types: ["authorization_code", "refresh_token"],
+    });
+    const code = await authorizeAndGetCode(context.app, client.client_id, validVerifier);
+    const issued = await token(
+      context.app,
+      validTokenRequest(code, client.client_id, validVerifier),
+    );
+    const initial = await issued.json() as { access_token: string; refresh_token: string };
+
+    expect(issued.status).toBe(200);
+    expect(initial.refresh_token).toBeTruthy();
+    expect(readFileSync(context.refreshTokenStoreFile, "utf8")).not.toContain(initial.refresh_token);
+
+    const wrongResource = await token(context.app, {
+      grant_type: "refresh_token",
+      refresh_token: initial.refresh_token,
+      client_id: client.client_id,
+      resource: "https://levitate.example.com/wrong/mcp",
+    });
+    expect(wrongResource.status).toBe(400);
+    await expect(wrongResource.json()).resolves.toEqual({ error: "invalid_grant" });
+
+    const refreshed = await token(context.app, {
+      grant_type: "refresh_token",
+      refresh_token: initial.refresh_token,
+      client_id: client.client_id,
+      resource: "https://levitate.example.com/brain/mcp",
+    });
+    const rotated = await refreshed.json() as { access_token: string; refresh_token: string };
+
+    expect(refreshed.status).toBe(200);
+    expect(rotated.refresh_token).not.toBe(initial.refresh_token);
+    await expect(context.authenticator.authenticate(new Request("http://localhost/mcp", {
+      headers: { authorization: `Bearer ${rotated.access_token}` },
+    }))).resolves.toMatchObject({
+      clientId: client.client_id,
+      scopes: ["brain:read"],
+    });
+
+    const replay = await token(context.app, {
+      grant_type: "refresh_token",
+      refresh_token: initial.refresh_token,
+      client_id: client.client_id,
+    });
+    expect(replay.status).toBe(400);
+    await expect(replay.json()).resolves.toEqual({ error: "invalid_grant" });
+
+    const revokedFamily = await token(context.app, {
+      grant_type: "refresh_token",
+      refresh_token: rotated.refresh_token,
+      client_id: client.client_id,
+    });
+    expect(revokedFamily.status).toBe(400);
+    await expect(revokedFamily.json()).resolves.toEqual({ error: "invalid_grant" });
+  });
+
+  it("allows refresh scope narrowing but rejects scope expansion", async () => {
+    const context = await createTestApp();
+    const client = await registerAndReadClient(context.app, {
+      grant_types: ["authorization_code", "refresh_token"],
+    });
+    const code = await authorizeAndGetCode(
+      context.app,
+      client.client_id,
+      validVerifier,
+      "https://levitate.example.com/brain/mcp",
+      "brain:read brain:write",
+    );
+    const issued = await token(
+      context.app,
+      validTokenRequest(code, client.client_id, validVerifier),
+    );
+    const initial = await issued.json() as { refresh_token: string };
+    const narrowed = await token(context.app, {
+      grant_type: "refresh_token",
+      refresh_token: initial.refresh_token,
+      client_id: client.client_id,
+      scope: "brain:read",
+    });
+    const narrowedBody = await narrowed.json() as { refresh_token: string; scope: string };
+
+    expect(narrowed.status).toBe(200);
+    expect(narrowedBody.scope).toBe("brain:read");
+
+    const expanded = await token(context.app, {
+      grant_type: "refresh_token",
+      refresh_token: narrowedBody.refresh_token,
+      client_id: client.client_id,
+      scope: "brain:read brain:write",
+    });
+    expect(expanded.status).toBe(400);
+    await expect(expanded.json()).resolves.toEqual({ error: "invalid_scope" });
+  });
+
+  it("rejects refresh tokens after client revocation", async () => {
+    const context = await createTestApp();
+    const client = await registerAndReadClient(context.app, {
+      grant_types: ["authorization_code", "refresh_token"],
+    });
+    const code = await authorizeAndGetCode(context.app, client.client_id, validVerifier);
+    const issued = await token(
+      context.app,
+      validTokenRequest(code, client.client_id, validVerifier),
+    );
+    const body = await issued.json() as { refresh_token: string };
+    await new JsonClientStore(context.clientStoreFile).revoke(client.client_id);
+
+    const response = await token(context.app, {
+      grant_type: "refresh_token",
+      refresh_token: body.refresh_token,
+      client_id: client.client_id,
+    });
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "invalid_client" });
+  });
+
   it("rejects invalid token exchanges", async () => {
     const context = await createTestApp();
     const client = await registerAndReadClient(context.app);
@@ -940,6 +1061,7 @@ function createTestConfig(options: TestOptions = {}) {
   const dir = mkdtempSync(join(tmpdir(), "levitate-oauth-as-"));
   const privateKeyFile = join(dir, "private.pem");
   const clientStoreFile = join(dir, "clients.json");
+  const refreshTokenStoreFile = join(dir, "refresh-tokens.json");
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   writeFileSync(privateKeyFile, privateKey.export({ type: "pkcs8", format: "pem" }), "utf8");
 
@@ -985,8 +1107,10 @@ function createTestConfig(options: TestOptions = {}) {
         scopes_supported: ["brain:read", "brain:write"],
         default_scopes: ["brain:read"],
         access_token_ttl_seconds: 3600,
+        refresh_token_ttl_seconds: 2_592_000,
         authorization_code_ttl_seconds: options.codeTtlSeconds ?? 300,
         client_store_file: clientStoreFile,
+        refresh_token_store_file: refreshTokenStoreFile,
         keys: {
           private_key_file: privateKeyFile,
           key_id: "test-key",
@@ -1008,6 +1132,7 @@ function createTestConfig(options: TestOptions = {}) {
     dir,
     privateKeyFile,
     clientStoreFile,
+    refreshTokenStoreFile,
   };
 }
 
@@ -1036,7 +1161,7 @@ function registerClient(
 
 async function registerAndReadClient(
   app: Awaited<ReturnType<typeof createTestApp>>["app"],
-  overrides: { scope?: string } = {},
+  overrides: { grant_types?: string[]; scope?: string } = {},
 ) {
   const response = await registerClient(app, overrides);
   return await response.json() as { client_id: string };
@@ -1074,12 +1199,14 @@ async function authorizeAndGetCode(
   clientId: string,
   verifier: string,
   resource = "https://levitate.example.com/brain/mcp",
+  scope?: string,
 ) {
   const response = await authorize(app, {
     client_id: clientId,
     redirect_uri: "https://chatgpt.com/connector/oauth/callback",
     code_challenge: pkceChallenge(verifier),
     resource,
+    scope,
   });
   const location = new URL(response.headers.get("location") ?? "");
   return location.searchParams.get("code") ?? "";

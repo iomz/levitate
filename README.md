@@ -254,6 +254,11 @@ Create one ChatGPT plugin entry for each named MCP endpoint that should appear s
 
 The approval secret is not an access token.
 Levitate issues the access token only after approval and ChatGPT's authorization-code and PKCE exchange.
+Clients registered for the `refresh_token` grant receive a rotating refresh token, allowing ChatGPT to renew expired access tokens without repeating manual approval.
+Each rotation renews the refresh token for `oauth.as.refresh_token_ttl_seconds`; inactive connections eventually expire, while active connections remain linked.
+Reuse of a rotated token revokes its family.
+Levitate stores only refresh-token hashes in the mode-`0600` file configured by `oauth.as.refresh_token_store_file`.
+When that path is omitted, Levitate derives it from `oauth.as.client_store_file`.
 Do not paste the approval secret into a ChatGPT conversation.
 
 Selecting **OAuth** does not choose between CIMD and DCR.

@@ -70,6 +70,7 @@ const config: LevitateConfig = {
       scopes_supported: [],
       default_scopes: [],
       access_token_ttl_seconds: 3600,
+      refresh_token_ttl_seconds: 2_592_000,
       authorization_code_ttl_seconds: 300,
       keys: {},
     },
