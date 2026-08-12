@@ -3,6 +3,8 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { hashValue } from "./codes.js";
 
+const REPLAY_DETECTION_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export interface RefreshTokenRecord {
   token_hash: string;
   family_id: string;
@@ -46,6 +48,7 @@ export class JsonRefreshTokenStore {
   ): Promise<RefreshTokenGrant> {
     return this.withWriteLock(async () => {
       const data = await this.read();
+      data.refresh_tokens = retainedRecords(data.refresh_tokens, now);
       const grant = createGrant(input, randomUUID(), new Date(now.getTime() + ttlSeconds * 1000), now);
       data.refresh_tokens.push(grant.record);
       await this.write(data);
@@ -61,6 +64,7 @@ export class JsonRefreshTokenStore {
   ): Promise<RefreshTokenGrant> {
     return this.withWriteLock(async () => {
       const data = await this.read();
+      data.refresh_tokens = retainedRecords(data.refresh_tokens, now);
       const record = data.refresh_tokens.find((entry) => entry.token_hash === hashValue(token));
       if (!record || Date.parse(record.expires_at) <= now.getTime() || record.revoked_at) {
         throw new RefreshTokenError("invalid");
@@ -105,9 +109,7 @@ export class JsonRefreshTokenStore {
   async pruneExpired(now = new Date()): Promise<number> {
     return this.withWriteLock(async () => {
       const data = await this.read();
-      const retained = data.refresh_tokens.filter(
-        (entry) => Date.parse(entry.expires_at) > now.getTime(),
-      );
+      const retained = retainedRecords(data.refresh_tokens, now);
       const removed = data.refresh_tokens.length - retained.length;
       if (removed) await this.write({ refresh_tokens: retained });
       return removed;
@@ -143,6 +145,18 @@ export class JsonRefreshTokenStore {
     this.writeChain = run.then(() => undefined, () => undefined);
     return run;
   }
+}
+
+function retainedRecords(
+  records: RefreshTokenRecord[],
+  now: Date,
+): RefreshTokenRecord[] {
+  const replayCutoff = now.getTime() - REPLAY_DETECTION_WINDOW_MS;
+  return records.filter((entry) =>
+    Date.parse(entry.expires_at) > now.getTime() &&
+    !entry.revoked_at &&
+    (!entry.used_at || Date.parse(entry.used_at) > replayCutoff)
+  );
 }
 
 function createGrant(

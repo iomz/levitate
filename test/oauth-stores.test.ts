@@ -80,4 +80,27 @@ describe("oauth ephemeral stores", () => {
       clientId: "client",
     }, 3_600, new Date("2026-08-12T00:03:00.000Z"))).rejects.toThrow("refresh token invalid");
   });
+
+  it("bounds used refresh-token history to the replay-detection window", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "levitate-refresh-store-"));
+    const path = join(directory, "refresh-tokens.json");
+    const store = new JsonRefreshTokenStore(path);
+    const issued = await store.issue({
+      client_id: "client",
+      resource: "https://example.com/mcp",
+      subject: "user",
+      scopes: ["read"],
+    }, 172_800, new Date("2026-08-12T00:00:00.000Z"));
+    await store.rotate(issued.token, {
+      clientId: "client",
+    }, 172_800, new Date("2026-08-12T00:01:00.000Z"));
+
+    await store.pruneExpired(new Date("2026-08-13T00:01:01.000Z"));
+
+    const data = JSON.parse(await readFile(path, "utf8")) as {
+      refresh_tokens: Array<{ used_at?: string }>;
+    };
+    expect(data.refresh_tokens).toHaveLength(1);
+    expect(data.refresh_tokens[0].used_at).toBeUndefined();
+  });
 });
