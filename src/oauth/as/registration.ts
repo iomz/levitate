@@ -2,7 +2,11 @@ import type { Hono } from "hono";
 import type { LevitateConfig } from "../../config.js";
 import type { Logger } from "../../logging.js";
 import type { ClientStore } from "./store.js";
-import { validateRegistration, type RegisterRequest } from "./validation.js";
+import {
+  parseSupportedGrantTypes,
+  validateRegistration,
+  type RegisterRequest,
+} from "./validation.js";
 import type { OAuthRateLimiter } from "./rate-limit.js";
 import { oauthAudit } from "./audit.js";
 
@@ -40,11 +44,14 @@ export function registerClientRegistrationRoute(app: Hono, config: LevitateConfi
 
     const redirectUris = body.redirect_uris as string[];
     const scope = typeof body.scope === "string" ? body.scope : undefined;
+    const grantTypes = body.grant_types === undefined
+      ? ["authorization_code"]
+      : parseSupportedGrantTypes(body.grant_types) as string[];
     const registered = await clients.add({
       client_name:
         typeof body.client_name === "string" ? body.client_name : undefined,
       redirect_uris: redirectUris,
-      grant_types: ["authorization_code"],
+      grant_types: grantTypes,
       response_types: ["code"],
       token_endpoint_auth_method: "none",
       scope,

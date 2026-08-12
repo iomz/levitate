@@ -111,8 +111,10 @@ const OAuthAuthorizationServerSchema = z.object({
   scopes_supported: z.array(z.string().min(1)).default([]),
   default_scopes: z.array(z.string().min(1)).default([]),
   access_token_ttl_seconds: z.coerce.number().int().positive().default(3600),
+  refresh_token_ttl_seconds: z.coerce.number().int().positive().default(2_592_000),
   authorization_code_ttl_seconds: z.coerce.number().int().positive().default(300),
   client_store_file: z.string().min(1).optional(),
+  refresh_token_store_file: z.string().min(1).optional(),
   keys: z.object({
     private_key_file: z.string().min(1).optional(),
     key_id: z.string().min(1).optional(),

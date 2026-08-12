@@ -7,6 +7,7 @@ import { AuthError, type AuthResult } from "../../auth/types.js";
 export interface AccessTokenInput {
   clientId: string;
   scopes: string[];
+  subject?: string;
 }
 
 export async function issueAccessToken(
@@ -26,7 +27,7 @@ export async function issueAccessToken(
   })
     .setProtectedHeader({ alg: "RS256", kid: keys.keyId, typ: "JWT" })
     .setIssuer(asConfig.issuer)
-    .setSubject(asConfig.subject)
+    .setSubject(input.subject ?? asConfig.subject)
     .setAudience(resource)
     .setIssuedAt()
     .setExpirationTime(`${asConfig.access_token_ttl_seconds}s`)

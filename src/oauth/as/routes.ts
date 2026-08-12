@@ -11,6 +11,7 @@ import { registerClientRegistrationRoute } from "./registration.js";
 import { registerTokenRoute } from "./token-endpoint.js";
 import { OAuthRateLimiter } from "./rate-limit.js";
 import { CimdClientResolver, CompositeClientLookup } from "./cimd.js";
+import { JsonRefreshTokenStore } from "./refresh-tokens.js";
 
 export interface OAuthAuthorizationServer {
   registerRoutes(app: Hono<any>): void;
@@ -35,6 +36,9 @@ export function createOAuthAuthorizationServer(
     ? new CimdClientResolver(config, logger, fetchImpl)
     : undefined;
   const clients = new CompositeClientLookup(registeredClients, cimdClients);
+  const refreshTokens = new JsonRefreshTokenStore(
+    asConfig.refresh_token_store_file ?? `${asConfig.client_store_file}.refresh-tokens.json`,
+  );
   const codes = new AuthorizationCodeStore();
   const pendingAuthorizations = new PendingAuthorizationStore();
   const rateLimitConfig = asConfig.rate_limits;
@@ -44,6 +48,15 @@ export function createOAuthAuthorizationServer(
   const cleanupInterval = setInterval(() => {
     const authorizationCodes = codes.pruneExpired();
     const approvals = pendingAuthorizations.pruneExpired();
+    void refreshTokens.pruneExpired().then((refreshTokenCount) => {
+      if (refreshTokenCount) {
+        logger.debug("oauth refresh token state pruned", { refreshTokens: refreshTokenCount });
+      }
+    }).catch((error) => {
+      logger.warn("oauth refresh token pruning failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
     if (authorizationCodes || approvals) {
       logger.debug("oauth ephemeral state pruned", {
         authorizationCodes,
@@ -68,12 +81,17 @@ export function createOAuthAuthorizationServer(
         logger,
         rateLimiter,
       );
-      registerTokenRoute(app, config, keys, clients, codes, logger, rateLimiter);
+      registerTokenRoute(app, config, keys, clients, codes, refreshTokens, logger, rateLimiter);
     },
     close(): void {
       clearInterval(cleanupInterval);
       codes.pruneExpired();
       pendingAuthorizations.pruneExpired();
+      void refreshTokens.pruneExpired().catch((error) => {
+        logger.warn("oauth refresh token pruning failed", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
     },
   };
 }

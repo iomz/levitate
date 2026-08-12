@@ -519,6 +519,7 @@ allowed_client_id_prefixes = ["https://chatgpt.com/oauth/"]
     expect(config.oauth.as.dcr.enabled).toBe(true);
     expect(config.oauth.as.issuer).toBe("https://levitate.example.com");
     expect(config.oauth.as.access_token_ttl_seconds).toBe(3600);
+    expect(config.oauth.as.refresh_token_ttl_seconds).toBe(2_592_000);
     expect(config.oauth.as.authorization_code_ttl_seconds).toBe(300);
   });
 

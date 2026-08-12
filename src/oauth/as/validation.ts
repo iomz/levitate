@@ -159,13 +159,22 @@ function isExactStringArray(value: unknown, expected: string[]): boolean {
   );
 }
 
-function isSupportedGrantTypes(value: unknown): boolean {
+export function parseSupportedGrantTypes(value: unknown): string[] | undefined {
   if (
     !Array.isArray(value) ||
     !value.every((entry) => typeof entry === "string")
   )
-    return false;
-  return (
-    value.length === 1 && value[0] === "authorization_code"
-  );
+    return undefined;
+  const unique = [...new Set(value)];
+  if (unique.length !== value.length || !unique.includes("authorization_code")) {
+    return undefined;
+  }
+  if (!unique.every((entry) => ["authorization_code", "refresh_token"].includes(entry))) {
+    return undefined;
+  }
+  return unique;
+}
+
+function isSupportedGrantTypes(value: unknown): boolean {
+  return parseSupportedGrantTypes(value) !== undefined;
 }

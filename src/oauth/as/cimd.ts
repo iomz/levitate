@@ -1,6 +1,10 @@
 import type { LevitateConfig } from "../../config.js";
 import type { Logger } from "../../logging.js";
-import { isAllowedRedirectUri, matchesHttpsUrlPrefix } from "./validation.js";
+import {
+  isAllowedRedirectUri,
+  matchesHttpsUrlPrefix,
+  parseSupportedGrantTypes,
+} from "./validation.js";
 import type { ClientLookup, OAuthClient } from "./store.js";
 
 const FETCH_TIMEOUT_MS = 3_000;
@@ -185,8 +189,7 @@ function validateDocument(
     throw new Error("invalid_redirect_uris");
   if (
     document.grant_types !== undefined &&
-    (!isStringArray(document.grant_types) ||
-      !document.grant_types.includes("authorization_code"))
+    !parseSupportedGrantTypes(document.grant_types)
   )
     throw new Error("unsupported_grant_types");
   if (
@@ -213,7 +216,9 @@ function validateDocument(
     client_name: document.client_name,
     registration_method: "cimd",
     redirect_uris: document.redirect_uris as string[],
-    grant_types: ["authorization_code"],
+    grant_types: document.grant_types === undefined
+      ? ["authorization_code"]
+      : parseSupportedGrantTypes(document.grant_types) as string[],
     response_types: ["code"],
     token_endpoint_auth_method: "none",
     scope: typeof document.scope === "string" ? document.scope : undefined,
