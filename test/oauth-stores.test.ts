@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { afterEach, describe, expect, it } from "vitest";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,6 +8,14 @@ import {
 } from "../src/oauth/as/approval.js";
 import { AuthorizationCodeStore } from "../src/oauth/as/codes.js";
 import { JsonRefreshTokenStore } from "../src/oauth/as/refresh-tokens.js";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(temporaryDirectories.splice(0).map((directory) =>
+    rm(directory, { recursive: true, force: true })
+  ));
+});
 
 describe("oauth ephemeral stores", () => {
   it("prunes expired authorization codes explicitly", () => {
@@ -52,6 +60,7 @@ describe("oauth ephemeral stores", () => {
 
   it("persists hashed rotating refresh tokens with private permissions", async () => {
     const directory = await mkdtemp(join(tmpdir(), "levitate-refresh-store-"));
+    temporaryDirectories.push(directory);
     const path = join(directory, "refresh-tokens.json");
     const issuedAt = new Date("2026-08-12T00:00:00.000Z");
     const store = new JsonRefreshTokenStore(path);
@@ -83,6 +92,7 @@ describe("oauth ephemeral stores", () => {
 
   it("bounds used refresh-token history to the replay-detection window", async () => {
     const directory = await mkdtemp(join(tmpdir(), "levitate-refresh-store-"));
+    temporaryDirectories.push(directory);
     const path = join(directory, "refresh-tokens.json");
     const store = new JsonRefreshTokenStore(path);
     const issued = await store.issue({
