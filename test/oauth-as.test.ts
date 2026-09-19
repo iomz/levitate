@@ -647,6 +647,8 @@ describe("oauth authorization server facade", () => {
     expect(html).toContain("brain:read");
     expect(html).toContain("Dynamic Client Registration");
     expect(html).toContain("Approval secret");
+    expect(html).toContain('<link rel="icon" href="/oauth/assets/levitate-icon.png?v=1" type="image/png">');
+    expect(html).toContain('<img src="/oauth/assets/levitate-icon.png?v=1"');
     expect(html).toContain('id="eye_open"');
     expect(html).toContain('id="eye_closed"');
     expect(html).not.toContain("cdnjs.cloudflare.com");

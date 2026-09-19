@@ -88,6 +88,7 @@ export function renderApprovalPage(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Approve Levitate access</title>
+  <link rel="icon" href="/oauth/assets/levitate-icon.png?v=1" type="image/png">
   <style>
     :root {
       color-scheme: light;
@@ -268,7 +269,7 @@ export function renderApprovalPage(
 <body>
   <main>
     <header>
-      <img src="/oauth/assets/levitate-icon.png" alt="" aria-hidden="true">
+      <img src="/oauth/assets/levitate-icon.png?v=1" alt="" aria-hidden="true">
       <div>
         <h1>Approve Levitate access</h1>
         <p class="subtitle">Confirm this OAuth client before Levitate issues an authorization code.</p>
