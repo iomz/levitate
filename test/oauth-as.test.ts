@@ -350,7 +350,7 @@ describe("oauth authorization server facade", () => {
     const context = createTestConfig();
     context.config.oauth.as.keys.private_key_file = join(context.dir, "missing.pem");
     await expect(loadAuthorizationServerKeys(context.config)).rejects.toThrow(
-      "failed to load oauth authorization server signing key",
+      "Create one with: levitate oauth keys init --config <config>",
     );
 
     writeFileSync(context.privateKeyFile, "not a private key", "utf8");

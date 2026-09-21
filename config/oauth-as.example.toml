@@ -1,5 +1,5 @@
 # Private single-backend deployment using Levitate's local OAuth AS facade.
-# Generate RSA key before startup and set LEVITATE_APPROVAL_SECRET.
+# Run `levitate oauth keys init --config <config>` before startup and set LEVITATE_APPROVAL_SECRET.
 # Enable DCR only while registering a new client.
 
 [server]

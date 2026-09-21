@@ -44,6 +44,12 @@ export async function loadAuthorizationServerKeys(config: LevitateConfig): Promi
       },
     };
   } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(
+        `oauth.as.keys.private_key_file not found at '${privateKeyFile}'. ` +
+        "Create one with: levitate oauth keys init --config <config>",
+      );
+    }
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`failed to load oauth authorization server signing key: ${message}`);
   }
