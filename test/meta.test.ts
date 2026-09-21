@@ -70,6 +70,29 @@ describe("reserved metadata stripping", () => {
     expect(strippedKeys).toEqual(["IO.GitHub.Iomz.Levitate/Principal"]);
   });
 
+  it("preserves a JSON-parsed __proto__ entry as an own property", () => {
+    const meta = JSON.parse('{"__proto__":{"polluted":true},"com.example/trace":"t1"}');
+    meta[`${LEVITATE_META_PREFIX}principal`] = { subject: "attacker" };
+
+    const { params, strippedKeys } = stripReservedMeta({ name: "fake_allowed", _meta: meta });
+
+    const sanitized = params._meta ?? {};
+    expect(Object.prototype.hasOwnProperty.call(sanitized, "__proto__")).toBe(true);
+    expect(Object.keys(sanitized)).toEqual(["__proto__", "com.example/trace"]);
+    expect(Object.getPrototypeOf(sanitized)).toBe(Object.prototype);
+    expect(strippedKeys).toEqual([`${LEVITATE_META_PREFIX}principal`]);
+  });
+
+  it("keeps _meta when __proto__ is the only entry left after stripping", () => {
+    const meta = JSON.parse('{"__proto__":{"polluted":true}}');
+    meta[`${LEVITATE_META_PREFIX}principal`] = { subject: "attacker" };
+
+    const { params } = stripReservedMeta({ name: "fake_allowed", _meta: meta });
+
+    expect(params._meta).toBeDefined();
+    expect(Object.keys(params._meta ?? {})).toEqual(["__proto__"]);
+  });
+
   it("does not mutate the caller's request", () => {
     const meta = { [`${LEVITATE_META_PREFIX}principal`]: { subject: "attacker" } };
     const original = { name: "fake_allowed", _meta: meta };

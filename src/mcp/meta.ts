@@ -33,22 +33,27 @@ export function stripReservedMeta<T extends RequestParamsWithMeta>(
   if (!meta) return { params, strippedKeys: [] };
 
   const strippedKeys: string[] = [];
-  const retained: { [key: string]: unknown } = {};
+  const retained: [string, unknown][] = [];
   for (const [key, value] of Object.entries(meta)) {
     if (isReservedMetaKey(key)) {
       strippedKeys.push(key);
       continue;
     }
-    retained[key] = value;
+    retained.push([key, value]);
   }
 
   if (!strippedKeys.length) return { params, strippedKeys };
 
-  if (!Object.keys(retained).length) {
+  if (!retained.length) {
     const { _meta: _dropped, ...rest } = params;
     return { params: rest as T, strippedKeys };
   }
-  return { params: { ...params, _meta: retained }, strippedKeys };
+  // Object.fromEntries defines own data properties. Assigning key by key would
+  // instead invoke the inherited setter for a "__proto__" entry, which JSON
+  // parsing can produce as an own key: the entry would be dropped rather than
+  // forwarded, and the rebuilt object would take the caller's value as its
+  // prototype.
+  return { params: { ...params, _meta: Object.fromEntries(retained) }, strippedKeys };
 }
 
 function isReservedMetaKey(key: string): boolean {
