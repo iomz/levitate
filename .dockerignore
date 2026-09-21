@@ -1,0 +1,22 @@
+# Build context exclusions.
+#
+# node_modules dominates the context at ~83MB and is reinstalled in the image
+# from the lockfile, so sending it only slows every build.
+#
+# state/ holds the OAuth private key, client store, refresh tokens and the
+# approval secret. Nothing should copy it into an image, and keeping it out of
+# the context means nothing can.
+
+.git
+.github
+node_modules
+dist
+state
+work
+outputs
+.envrc
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
