@@ -58,7 +58,12 @@ export class OidcJwtAuthenticator implements Authenticator {
       issuer: payload.iss,
     };
     const clientId = getClientId(payload);
-    if (email) result.email = email;
+    // Only a verified email leaves the authenticator. The allowed_emails gate
+    // above already requires email_verified when it is configured, so its
+    // semantics are unchanged; this closes the case where no allowlist is
+    // configured and an unverified claim would otherwise reach a backend
+    // through the propagated principal.
+    if (email && payload.email_verified === true) result.email = email;
     if (clientId) result.clientId = clientId;
     return result;
   }

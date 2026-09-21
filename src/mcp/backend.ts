@@ -84,6 +84,27 @@ export class StdioMcpBackend {
     params: CallToolRequest["params"],
     principal?: Principal,
   ): Promise<CallToolResult> {
+    // principal.enabled is an operator statement that this backend receives an
+    // authenticated principal. If Levitate cannot fulfil it, the call is
+    // refused rather than degraded to a principal-less one: silently
+    // proceeding would make the enabled and disabled states indistinguishable
+    // at the backend, and would rest a gateway invariant on every backend
+    // author implementing their half of it. Enforced here, at the process
+    // boundary, so a future call path cannot omit it.
+    if (this.config.principal.enabled && !principal) {
+      this.logger.error("refusing tool call without an asserted principal", {
+        backend: this.config.id,
+        tool: params.name,
+      });
+      return {
+        content: [{
+          type: "text",
+          text: `Levitate refused tool call: ${params.name} (principal required)`,
+        }],
+        isError: true,
+      };
+    }
+
     // Sanitizing here rather than in the proxy keeps the rule at the process
     // boundary, so it covers every request forwarded to the backend including
     // any handler added later.

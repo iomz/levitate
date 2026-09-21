@@ -50,24 +50,56 @@ export type PrincipalResult =
 export function buildPrincipal(auth: AuthResult, now: Date = new Date()): PrincipalResult {
   const authKind = principalAuthKind(auth.kind);
   if (!authKind) {
-    return { refusal: `auth kind ${auth.kind} identifies no principal` };
+    return { refusal: "auth kind identifies no principal" };
   }
-  if (!auth.subject) return { refusal: "authentication result carries no subject" };
-  if (!auth.issuer) return { refusal: "authentication result carries no issuer" };
+
+  // Every field is checked at runtime before it crosses the boundary. The
+  // declared types describe what an authenticator should produce, not what a
+  // malfunctioning or future one will; a malformed value is refused rather
+  // than coerced, and the refusal reaches the caller as a typed result rather
+  // than an incidental TypeError.
+  const subject = asNonEmptyString(auth.subject);
+  if (!subject) return { refusal: "authentication result carries no usable subject" };
+  const issuer = asNonEmptyString(auth.issuer);
+  if (!issuer) return { refusal: "authentication result carries no usable issuer" };
+  const scopes = asStringArray(auth.scopes);
+  if (!scopes) return { refusal: "authentication result carries malformed scopes" };
 
   const principal: Principal = {
-    issuer: auth.issuer,
-    subject: auth.subject,
+    issuer,
+    subject,
     subject_type: authKind === "oidc" ? "user" : "owner",
     auth_kind: authKind,
-    scopes: [...auth.scopes],
+    scopes,
     asserted_at: now.toISOString(),
   };
-  // Optional fields are attached only when the authenticator actually resolved
-  // one. email is a display attribute; identity is keyed by issuer + subject.
-  if (auth.clientId) principal.client_id = auth.clientId;
-  if (auth.email) principal.email = auth.email;
+
+  // Optional fields are attached only when the authenticator resolved one, and
+  // a present-but-malformed value refuses the whole principal rather than being
+  // quietly dropped: an authenticator emitting the wrong type here is
+  // malfunctioning, which is not a reason to trust the rest of its result.
+  // email is a display attribute; identity is keyed by issuer + subject.
+  if (auth.clientId !== undefined) {
+    const clientId = asNonEmptyString(auth.clientId);
+    if (!clientId) return { refusal: "authentication result carries a malformed client id" };
+    principal.client_id = clientId;
+  }
+  if (auth.email !== undefined) {
+    const email = asNonEmptyString(auth.email);
+    if (!email) return { refusal: "authentication result carries a malformed email" };
+    principal.email = email;
+  }
   return { principal };
+}
+
+function asNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function asStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  if (!value.every((entry) => typeof entry === "string")) return undefined;
+  return [...value] as string[];
 }
 
 /**

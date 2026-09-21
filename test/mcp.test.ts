@@ -1010,18 +1010,62 @@ describe("principal propagation across the stdio trust boundary", () => {
     expect(served.warnings).toEqual([]);
   });
 
-  it("refuses to assert a principal for bearer authentication at runtime", async () => {
+  it("refuses the call outright when propagation is enabled but bearer auth identifies no one", async () => {
     const served = await serve({
       enabled: true,
       auth: { kind: "bearer", subject: "bearer-token", scopes: [], issuer: "https://levitate.example.com" },
     });
 
-    const meta = await callAndReadMeta(served.client);
+    const result = await served.client.callTool({ name: "fake_allowed", arguments: {} });
 
-    expect(meta).toBeUndefined();
+    expect((result as CallToolResult).isError).toBe(true);
+    expect((result as CallToolResult).content).toEqual([{
+      type: "text",
+      text: "Levitate refused tool call: fake_allowed (principal required)",
+    }]);
+    // The backend never ran the tool, so none of its echo is present.
+    expect(JSON.stringify(result)).not.toContain("arguments");
     expect(served.warnings).toContainEqual(expect.objectContaining({
       message: "principal not asserted",
     }));
+  });
+
+  it("refuses the call when the authentication result is malformed", async () => {
+    const served = await serve({
+      enabled: true,
+      auth: { kind: "oidc", subject: "idp-subject", issuer: "https://idp.example.com", scopes: "nope" } as unknown as AuthResult,
+    });
+
+    const result = await served.client.callTool({ name: "fake_allowed", arguments: {} });
+
+    expect((result as CallToolResult).isError).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("arguments");
+  });
+
+  it("keeps tools/list working while calls are refused for want of a principal", async () => {
+    const served = await serve({
+      enabled: true,
+      auth: { kind: "bearer", subject: "bearer-token", scopes: [], issuer: "https://levitate.example.com" },
+    });
+
+    const listed = await served.client.listTools();
+
+    expect(listed.tools.map((tool) => tool.name)).toEqual(["fake_allowed", "fake_denied"]);
+  });
+
+  it("leaves a propagation-disabled backend unaffected by an unbuildable principal", async () => {
+    const served = await serve({
+      enabled: false,
+      auth: { kind: "bearer", subject: "bearer-token", scopes: [], issuer: "https://levitate.example.com" },
+    });
+
+    const result = await served.client.callTool({
+      name: "fake_allowed",
+      arguments: { message: "hello" },
+    });
+
+    expect((result as CallToolResult).isError).not.toBe(true);
+    expect(echoed(result)).toEqual({ tool: "fake_allowed", arguments: { message: "hello" } });
   });
 
   it("does not mutate the caller's request when attaching the principal", async () => {

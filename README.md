@@ -206,8 +206,8 @@ The principal travels on `tools/call` under `io.github.iomz.levitate/principal`:
 ```
 
 `tools/list` is not augmented.
-`email` appears only when the authenticator resolved one, and is a display attribute; identity is keyed by `issuer` plus `subject`.
-The object is built field by field from an allowlist, so no token, authorization header, raw claim or other authentication material can reach a backend through it.
+`email` appears only when the identity provider marked it verified, and is a display attribute; identity is keyed by `issuer` plus `subject`.
+The object is built field by field from an allowlist and every field is type-checked before it is copied, so no token, authorization header, raw claim or other authentication material can reach a backend through it, and a malformed authentication result produces no principal rather than a coerced one.
 
 `subject_type` states what the identity actually is:
 
@@ -218,6 +218,9 @@ The object is built field by field from an allowlist, so no token, authorization
 | `bearer` | — | refused; a shared secret identifies no one |
 
 `principal.enabled` with `auth.mode = "bearer"` fails at configuration load rather than sending a fabricated identity.
+
+Propagation fails closed. When it is enabled but no principal can be asserted, the tool call is refused with an MCP tool error and the backend is never invoked, because an enabled backend that silently received a principal-less call would be indistinguishable from one that never opted in.
+`tools/list` keeps working in that state.
 
 ### What a backend author can rely on
 

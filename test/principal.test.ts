@@ -60,9 +60,49 @@ describe("principal construction", () => {
 
   it("refuses when the identity key is incomplete", () => {
     expect(buildPrincipal({ ...oidc(), subject: undefined }, asserted).refusal)
-      .toContain("no subject");
+      .toContain("no usable subject");
     expect(buildPrincipal({ ...oidc(), issuer: undefined }, asserted).refusal)
-      .toContain("no issuer");
+      .toContain("no usable issuer");
+  });
+
+  it("refuses malformed values instead of coercing them into a principal", () => {
+    const cases: [string, unknown, string][] = [
+      ["scopes missing", { ...oidc(), scopes: undefined }, "malformed scopes"],
+      ["scopes as a string", { ...oidc(), scopes: "not-an-array" }, "malformed scopes"],
+      ["scopes with a non-string entry", { ...oidc(), scopes: ["ok", 7] }, "malformed scopes"],
+      ["scopes as an object", { ...oidc(), scopes: { 0: "a", length: 1 } }, "malformed scopes"],
+      ["subject as a number", { ...oidc(), subject: 42 }, "no usable subject"],
+      ["subject empty", { ...oidc(), subject: "" }, "no usable subject"],
+      ["issuer as an object", { ...oidc(), issuer: { toString: () => "https://evil" } }, "no usable issuer"],
+      ["email as an object", { ...oidc(), email: { toString: () => "a@b.c" } }, "malformed email"],
+      ["email as a number", { ...oidc(), email: 1 }, "malformed email"],
+      ["client id as an array", { ...oidc(), clientId: ["a"] }, "malformed client id"],
+    ];
+
+    for (const [label, auth, expected] of cases) {
+      const result = buildPrincipal(auth as AuthResult, asserted);
+      expect(result.principal, label).toBeUndefined();
+      expect(result.refusal, label).toContain(expected);
+    }
+  });
+
+  it("does not turn a string of scopes into one scope per character", () => {
+    const result = buildPrincipal({ ...oidc(), scopes: "admin" } as unknown as AuthResult, asserted);
+
+    expect(result.principal).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain('"a","d","m"');
+  });
+
+  it("keeps the refusal reason free of authentication material", () => {
+    const result = buildPrincipal({
+      kind: "bearer",
+      subject: "secret-looking-subject",
+      issuer: "https://levitate.example.com",
+      scopes: [],
+    }, asserted);
+
+    expect(result.refusal).toBe("auth kind identifies no principal");
+    expect(result.refusal).not.toContain("secret-looking-subject");
   });
 
   it("emits exactly the allowlisted fields and no authentication material", () => {
