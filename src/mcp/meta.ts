@@ -9,6 +9,13 @@
  */
 export const LEVITATE_META_PREFIX = "io.github.iomz.levitate/";
 
+/**
+ * The key carrying the principal Levitate asserts to a backend that opted in.
+ * It sits inside the reserved namespace, so an inbound value under this key is
+ * stripped like any other and can never be mistaken for one Levitate authored.
+ */
+export const PRINCIPAL_META_KEY = `${LEVITATE_META_PREFIX}principal`;
+
 interface RequestParamsWithMeta {
   _meta?: { [key: string]: unknown };
 }

@@ -147,6 +147,7 @@ function keysConfig(privateKeyFile: string): LevitateConfig {
     stdio: { command: "node", args: [] },
     env: {},
     instructions: { passthrough: true },
+    principal: { enabled: false },
     auth: { mode: "bearer", token: "secret" },
     oauth: {
       resource: {

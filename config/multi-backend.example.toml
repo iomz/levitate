@@ -39,5 +39,9 @@ args = ["test/fixtures/fake-stdio-server.mjs"]
 [backends.admin.instructions]
 text = "Restricted administrative endpoint."
 
+# Off by default. Requires auth.mode oidc or levitate; bearer is refused.
+# [backends.admin.principal]
+# enabled = true
+
 [backends.admin.tools]
 allow = ["fake_denied"]

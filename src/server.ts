@@ -4,7 +4,8 @@ import { readFile } from "node:fs/promises";
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import type { ServerType } from "@hono/node-server";
-import type { Authenticator } from "./auth/types.js";
+import { buildPrincipal, type Principal } from "./auth/principal.js";
+import type { AuthResult, Authenticator } from "./auth/types.js";
 import { AuthError } from "./auth/types.js";
 import { getBackendConfigs, type BackendConfig, type LevitateConfig } from "./config.js";
 import type { Logger } from "./logging.js";
@@ -131,8 +132,9 @@ export function createApp(context: AppContext): Hono<AppEnv> {
   for (const runtime of backends) app.all(runtime.config.mcp_path, async (c) => {
     if (c.req.method === "OPTIONS") return c.body(null, 204);
 
+    let auth: AuthResult;
     try {
-      await context.authenticator.authenticate(c.req.raw);
+      auth = await context.authenticator.authenticate(c.req.raw);
     } catch (error) {
       const message = error instanceof Error ? error.message : "auth failed";
       context.logger.warn("auth failed", {
@@ -163,6 +165,7 @@ export function createApp(context: AppContext): Hono<AppEnv> {
       instructions: runtime.instructions,
       backend: runtime.backend,
       policy: runtime.config.tools,
+      principal: resolvePrincipal(runtime.config, auth, context.logger, c.get("requestId")),
       logger: context.logger,
     });
   });
@@ -230,4 +233,37 @@ function getPathScopedResourceMetadataPath(protectedPath: string): string {
   return protectedPath === "/"
     ? "/.well-known/oauth-protected-resource"
     : `/.well-known/oauth-protected-resource${protectedPath}`;
+}
+
+/**
+ * Builds the principal for one request, for a backend that opted in.
+ *
+ * A backend that did not opt in never reaches buildPrincipal, so its requests
+ * are byte-identical to what they were before propagation existed.
+ *
+ * Returning undefined here does not mean the call proceeds without a
+ * principal. For a backend that opted in, StdioMcpBackend.callTool refuses the
+ * call outright and never invokes the backend — that check is the enforcement
+ * point and must not be removed on the strength of anything decided here. This
+ * function only resolves the principal and records why one could not be built;
+ * the refusal reason is logged here because this is where it is known.
+ */
+function resolvePrincipal(
+  backendConfig: BackendConfig,
+  auth: AuthResult,
+  logger: Logger,
+  requestId: string,
+): Principal | undefined {
+  if (!backendConfig.principal.enabled) return undefined;
+
+  const result = buildPrincipal(auth);
+  if (!result.principal) {
+    logger.warn("principal not asserted", {
+      backend: backendConfig.id,
+      requestId,
+      reason: result.refusal,
+    });
+    return undefined;
+  }
+  return result.principal;
 }

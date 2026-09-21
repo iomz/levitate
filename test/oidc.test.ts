@@ -41,6 +41,7 @@ const config: LevitateConfig = {
   },
   env: {},
   instructions: { passthrough: true },
+  principal: { enabled: false },
   auth: {
     mode: "oidc",
     issuer,
@@ -285,6 +286,64 @@ describe("oidc jwt auth", () => {
       audience,
       issuer,
     });
+  });
+
+  it("keeps an unverified email out of the authentication result", async () => {
+    const auth = createAuth();
+    const token = await signJwt({
+      iss: issuer,
+      sub: "client-id@clients",
+      email: "unverified@example.com",
+      aud: audience,
+      exp: nowSeconds + 60,
+    });
+
+    const result = await auth.verifyToken(token);
+
+    expect(result).not.toHaveProperty("email");
+    expect(JSON.stringify(result)).not.toContain("unverified@example.com");
+  });
+
+  it("keeps an explicitly unverified email out of the authentication result", async () => {
+    const auth = createAuth();
+    const token = await signJwt({
+      iss: issuer,
+      sub: "client-id@clients",
+      email: "unverified@example.com",
+      email_verified: false,
+      aud: audience,
+      exp: nowSeconds + 60,
+    });
+
+    await expect(auth.verifyToken(token)).resolves.not.toHaveProperty("email");
+  });
+
+  it("ignores a non-boolean email_verified claim", async () => {
+    const auth = createAuth();
+    const token = await signJwt({
+      iss: issuer,
+      sub: "client-id@clients",
+      email: "unverified@example.com",
+      email_verified: "true",
+      aud: audience,
+      exp: nowSeconds + 60,
+    });
+
+    await expect(auth.verifyToken(token)).resolves.not.toHaveProperty("email");
+  });
+
+  it("carries a verified email through to the authentication result", async () => {
+    const auth = createAuth();
+    const token = await signJwt({
+      iss: issuer,
+      sub: "client-id@clients",
+      email: "verified@example.com",
+      email_verified: true,
+      aud: audience,
+      exp: nowSeconds + 60,
+    });
+
+    await expect(auth.verifyToken(token)).resolves.toHaveProperty("email", "verified@example.com");
   });
 
   it("parses space-separated scope claims", async () => {

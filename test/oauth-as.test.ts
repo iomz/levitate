@@ -169,6 +169,7 @@ describe("oauth authorization server facade", () => {
         stdio: { command: "unused", args: [] },
         env: {},
         instructions: { passthrough: true },
+        principal: { enabled: false },
         tools: { allow: ["search"], deny: [] },
       },
       ingest: {
@@ -176,6 +177,7 @@ describe("oauth authorization server facade", () => {
         stdio: { command: "unused", args: [] },
         env: {},
         instructions: { passthrough: true },
+        principal: { enabled: false },
         tools: { allow: ["search"], deny: [] },
       },
     };
@@ -1081,6 +1083,7 @@ function createTestConfig(options: TestOptions = {}) {
     },
     env: {},
     instructions: { passthrough: true },
+    principal: { enabled: false },
     auth: {
       mode: "levitate",
     },

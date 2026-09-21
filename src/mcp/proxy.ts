@@ -5,6 +5,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { StdioMcpBackend } from "./backend.js";
+import type { Principal } from "../auth/principal.js";
 import { deniedReason, filterTools, type ToolPolicy } from "./policy.js";
 import type { Logger } from "../logging.js";
 import { LEVITATE_VERSION } from "../version.js";
@@ -15,6 +16,12 @@ export interface ProxyOptions {
   instructions?: string;
   backend: StdioMcpBackend;
   policy: ToolPolicy;
+  /**
+   * Present only when this backend opted into propagation and a principal
+   * could be asserted. tools/list is deliberately left unaugmented, so this
+   * reaches the backend on tools/call alone.
+   */
+  principal?: Principal;
   logger: Logger;
 }
 
@@ -81,7 +88,7 @@ export function createProxyServer(options: ProxyOptions): Server {
     }
 
     options.logger.info("tool call allowed", { tool: request.params.name });
-    return options.backend.callTool(request.params);
+    return options.backend.callTool(request.params, options.principal);
   });
 
   return server;

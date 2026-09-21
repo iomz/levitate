@@ -10,7 +10,8 @@ import type {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { BackendConfig } from "../config.js";
 import type { Logger } from "../logging.js";
-import { stripReservedMeta } from "./meta.js";
+import { PRINCIPAL_META_KEY, stripReservedMeta } from "./meta.js";
+import type { Principal } from "../auth/principal.js";
 
 export class StdioMcpBackend {
   private readonly client = new Client(
@@ -79,7 +80,31 @@ export class StdioMcpBackend {
     return this.client.listTools();
   }
 
-  async callTool(params: CallToolRequest["params"]): Promise<CallToolResult> {
+  async callTool(
+    params: CallToolRequest["params"],
+    principal?: Principal,
+  ): Promise<CallToolResult> {
+    // principal.enabled is an operator statement that this backend receives an
+    // authenticated principal. If Levitate cannot fulfil it, the call is
+    // refused rather than degraded to a principal-less one: silently
+    // proceeding would make the enabled and disabled states indistinguishable
+    // at the backend, and would rest a gateway invariant on every backend
+    // author implementing their half of it. Enforced here, at the process
+    // boundary, so a future call path cannot omit it.
+    if (this.config.principal.enabled && !principal) {
+      this.logger.error("refusing tool call without an asserted principal", {
+        backend: this.config.id,
+        tool: params.name,
+      });
+      return {
+        content: [{
+          type: "text",
+          text: `Levitate refused tool call: ${params.name} (principal required)`,
+        }],
+        isError: true,
+      };
+    }
+
     // Sanitizing here rather than in the proxy keeps the rule at the process
     // boundary, so it covers every request forwarded to the backend including
     // any handler added later.
@@ -91,7 +116,24 @@ export class StdioMcpBackend {
         keys: strippedKeys,
       });
     }
-    return this.client.callTool(sanitized) as Promise<CallToolResult>;
+
+    // Injection happens after stripping, never before, so a client-supplied
+    // value under the principal key is replaced rather than merged with. The
+    // two steps live together because that ordering is the whole guarantee.
+    const forwarded = principal
+      ? attachPrincipal(sanitized, principal)
+      : sanitized;
+    if (principal) {
+      this.logger.info("principal asserted to backend", {
+        backend: this.config.id,
+        tool: params.name,
+        auth_kind: principal.auth_kind,
+        subject_type: principal.subject_type,
+        subject: principal.subject,
+        client_id: principal.client_id,
+      });
+    }
+    return this.client.callTool(forwarded) as Promise<CallToolResult>;
   }
 
   async close(): Promise<void> {
@@ -103,4 +145,19 @@ export class StdioMcpBackend {
   isReady(): boolean {
     return this.ready;
   }
+}
+
+/**
+ * Returns a copy carrying the principal. stripReservedMeta returns the caller's
+ * own object when it had nothing to remove, so building new objects here is
+ * what keeps this from mutating a request the proxy still owns.
+ */
+function attachPrincipal(
+  params: CallToolRequest["params"],
+  principal: Principal,
+): CallToolRequest["params"] {
+  return {
+    ...params,
+    _meta: { ...params._meta, [PRINCIPAL_META_KEY]: principal },
+  };
 }
