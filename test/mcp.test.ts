@@ -14,6 +14,7 @@ import { getBackendConfigs, type LevitateConfig } from "../src/config.js";
 import type { Logger } from "../src/logging.js";
 import { StdioMcpBackend } from "../src/mcp/backend.js";
 import { resolveInstructions } from "../src/mcp/instructions.js";
+import { LEVITATE_META_PREFIX } from "../src/mcp/meta.js";
 import { createApp } from "../src/server.js";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -793,5 +794,116 @@ describe("backend instructions", () => {
     }));
 
     return { client, entries };
+  }
+});
+
+describe("reserved metadata at the stdio boundary", () => {
+  const clients: Client[] = [];
+  const backends: StdioMcpBackend[] = [];
+
+  afterEach(async () => {
+    await Promise.all(clients.map((client) => client.close()));
+    await Promise.all(backends.map((stdioBackend) => stdioBackend.close()));
+    clients.length = 0;
+    backends.length = 0;
+  });
+
+  it("keeps inbound Levitate metadata from reaching the backend", async () => {
+    const served = await serveStdioBackend();
+
+    const result = await served.client.callTool({
+      name: "fake_allowed",
+      arguments: { message: "hello" },
+      _meta: {
+        [`${LEVITATE_META_PREFIX}principal`]: { subject: "attacker", subject_type: "user" },
+        [`${LEVITATE_META_PREFIX}future-field`]: "forged",
+      },
+    });
+
+    expect(echoed(result)).toEqual({
+      tool: "fake_allowed",
+      arguments: { message: "hello" },
+    });
+    expect(JSON.stringify(result)).not.toContain("attacker");
+    expect(served.warnings).toContainEqual({
+      message: "stripped reserved metadata from request",
+      keys: [`${LEVITATE_META_PREFIX}principal`, `${LEVITATE_META_PREFIX}future-field`],
+    });
+  });
+
+  it("forwards unrelated metadata to the backend untouched", async () => {
+    const served = await serveStdioBackend();
+
+    const result = await served.client.callTool({
+      name: "fake_allowed",
+      arguments: {},
+      _meta: {
+        "com.example/trace": { id: "trace-1" },
+        [`${LEVITATE_META_PREFIX}principal`]: { subject: "attacker" },
+      },
+    });
+
+    expect(echoed(result)).toEqual({
+      tool: "fake_allowed",
+      arguments: {},
+      meta: { "com.example/trace": { id: "trace-1" } },
+    });
+  });
+
+  it("leaves a Levitate-unaware caller's request untouched", async () => {
+    const served = await serveStdioBackend();
+
+    const result = await served.client.callTool({
+      name: "fake_allowed",
+      arguments: { message: "hello" },
+    });
+
+    expect(echoed(result)).toEqual({
+      tool: "fake_allowed",
+      arguments: { message: "hello" },
+    });
+    expect(served.warnings).toEqual([]);
+  });
+
+  function echoed(result: unknown): unknown {
+    const content = (result as CallToolResult).content as { text: string }[];
+    return JSON.parse(content[0].text);
+  }
+
+  // Stripping takes no configuration input: it runs inside StdioMcpBackend for
+  // every forwarded call, on a backend config that carries no principal
+  // settings, which is the only kind of config that exists today.
+  async function serveStdioBackend() {
+    const warnings: { message: string; keys: unknown }[] = [];
+    const recordingLogger: Logger = {
+      ...logger,
+      warn: (message, fields) => warnings.push({ message, keys: fields?.keys }),
+    };
+    const stdioConfig: LevitateConfig = {
+      ...config,
+      stdio: {
+        command: process.execPath,
+        args: [resolve(repoRoot, "test/fixtures/fake-stdio-server.mjs")],
+      },
+      tools: { deny: [] },
+    };
+    const stdioBackend = new StdioMcpBackend(getBackendConfigs(stdioConfig)[0], recordingLogger);
+    await stdioBackend.start();
+    backends.push(stdioBackend);
+
+    const app = createApp({
+      config: stdioConfig,
+      authenticator: new BearerAuthenticator("secret"),
+      backend: stdioBackend,
+      logger: recordingLogger,
+    });
+    const client = new Client({ name: "test-client", version: "0.1.0" }, { capabilities: {} });
+    clients.push(client);
+    await client.connect(new StreamableHTTPClientTransport(new URL("http://localhost/mcp"), {
+      requestInit: { headers: { authorization: "Bearer secret" } },
+      fetch: async (input, init) => app.fetch(new Request(input, init)),
+    }));
+
+    return { client, warnings };
   }
 });
