@@ -70,6 +70,104 @@ command = "ingest-mcp"
     ]);
   });
 
+  it("defaults principal propagation to off for both config shapes", () => {
+    const legacy = parseConfigText(`
+[server]
+name = "gateway"
+[stdio]
+command = "node"
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`);
+    const named = parseConfigText(`
+[server]
+name = "gateway"
+[backends.notes]
+mcp_path = "/notes/mcp"
+[backends.notes.stdio]
+command = "notes-mcp"
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`);
+
+    expect(getBackendConfigs(legacy)[0].principal).toEqual({ enabled: false });
+    expect(getBackendConfigs(named)[0].principal).toEqual({ enabled: false });
+  });
+
+  it("carries per-backend principal propagation through named configuration", () => {
+    const config = parseConfigText(`
+[server]
+name = "gateway"
+[backends.notes]
+mcp_path = "/notes/mcp"
+[backends.notes.stdio]
+command = "notes-mcp"
+[backends.notes.principal]
+enabled = true
+[backends.ingest]
+mcp_path = "/ingest/mcp"
+[backends.ingest.stdio]
+command = "ingest-mcp"
+[auth]
+mode = "oidc"
+issuer = "https://idp.example.com"
+audience = "levitate"
+`);
+
+    const backends = getBackendConfigs(config);
+    expect(backends.find((backend) => backend.id === "notes")?.principal.enabled).toBe(true);
+    expect(backends.find((backend) => backend.id === "ingest")?.principal.enabled).toBe(false);
+  });
+
+  it("carries principal propagation through legacy single-backend configuration", () => {
+    const config = parseConfigText(`
+[server]
+name = "gateway"
+[stdio]
+command = "node"
+[principal]
+enabled = true
+[auth]
+mode = "oidc"
+issuer = "https://idp.example.com"
+audience = "levitate"
+`);
+
+    expect(getBackendConfigs(config)[0].principal.enabled).toBe(true);
+  });
+
+  it("rejects principal propagation under bearer authentication", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "gateway"
+[backends.notes]
+mcp_path = "/notes/mcp"
+[backends.notes.stdio]
+command = "notes-mcp"
+[backends.notes.principal]
+enabled = true
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`)).toThrow("bearer authentication identifies no principal");
+  });
+
+  it("rejects principal propagation under bearer authentication for legacy stdio", () => {
+    expect(() => parseConfigText(`
+[server]
+name = "gateway"
+[stdio]
+command = "node"
+[principal]
+enabled = true
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`)).toThrow("bearer authentication identifies no principal");
+  });
+
   it("rejects duplicate and reserved backend paths", () => {
     const parse = (secondPath: string) => parseConfigText(`
 [server]

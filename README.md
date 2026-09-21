@@ -179,6 +179,59 @@ They are not preserved byte-for-byte: inbound `_meta` is parsed before the sanit
 
 Matching ignores case, because no legitimate key differs from this namespace by case alone.
 
+## Principal Propagation
+
+Levitate can assert the authenticated caller's identity to a backend that asks for it.
+It is off by default, enabled per backend, and carried in standard MCP `_meta`, so an ordinary stdio MCP server stays unaware that Levitate exists and needs no change.
+
+```toml
+[backends.notes.principal]
+enabled = true
+```
+
+Legacy single-backend deployments use a top-level `[principal]` block.
+
+The principal travels on `tools/call` under `io.github.iomz.levitate/principal`:
+
+```json
+{
+  "issuer": "https://levitate.example.com",
+  "subject": "local-owner",
+  "subject_type": "owner",
+  "auth_kind": "levitate",
+  "client_id": "https://chatgpt.com/connector/oauth/...",
+  "scopes": ["gateway:access"],
+  "asserted_at": "2026-09-21T09:30:00.000Z"
+}
+```
+
+`tools/list` is not augmented.
+`email` appears only when the authenticator resolved one, and is a display attribute; identity is keyed by `issuer` plus `subject`.
+The object is built field by field from an allowlist, so no token, authorization header, raw claim or other authentication material can reach a backend through it.
+
+`subject_type` states what the identity actually is:
+
+| `auth.mode` | `subject_type` | meaning |
+| --- | --- | --- |
+| `oidc` | `user` | a person, as identified by the external IdP |
+| `levitate` | `owner` | the deployment owner, because Levitate's own authorization server issues one configured subject for the whole deployment |
+| `bearer` | — | refused; a shared secret identifies no one |
+
+`principal.enabled` with `auth.mode = "bearer"` fails at configuration load rather than sending a fabricated identity.
+
+### What a backend author can rely on
+
+Only Levitate authors metadata under `io.github.iomz.levitate/*`; inbound values in that namespace are stripped before a request crosses into the backend process, so a value observed there came from Levitate.
+That guarantee rests on the stdio process boundary: a backend's only writer is the Levitate process that spawned it, which is why no signature is involved.
+
+A backend that relies on propagation for a privileged operation must treat an absent principal as unauthenticated for that operation, and must not fall back to trusting the local process.
+A backend needing per-user authorization must require `subject_type` of `user` and refuse values it does not recognize, including ones added later.
+
+Levitate asserts who the caller is.
+What that identity may do — which records it sees, which operations it may perform, how it maps onto the backend's own user model — stays the backend's decision.
+
+The shape is unversioned and additive-only: new optional fields may appear, existing fields never change meaning or type and are never removed, and an incompatible future contract takes a new reserved key rather than mutating this one.
+
 ## Server Instructions
 
 A backend's own instructions — the orientation text its MCP server returns from `initialize` — are forwarded to remote clients unchanged by default.

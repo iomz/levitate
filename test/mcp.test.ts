@@ -10,11 +10,13 @@ import type {
 } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { BearerAuthenticator } from "../src/auth/bearer.js";
+import type { AuthResult, Authenticator } from "../src/auth/types.js";
+import { buildPrincipal } from "../src/auth/principal.js";
 import { getBackendConfigs, type LevitateConfig } from "../src/config.js";
 import type { Logger } from "../src/logging.js";
 import { StdioMcpBackend } from "../src/mcp/backend.js";
 import { resolveInstructions } from "../src/mcp/instructions.js";
-import { LEVITATE_META_PREFIX } from "../src/mcp/meta.js";
+import { LEVITATE_META_PREFIX, PRINCIPAL_META_KEY } from "../src/mcp/meta.js";
 import { createApp } from "../src/server.js";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -43,6 +45,7 @@ const config: LevitateConfig = {
   },
   env: {},
   instructions: { passthrough: true },
+  principal: { enabled: false },
   auth: {
     mode: "bearer",
     token: "secret",
@@ -501,6 +504,7 @@ describe("mcp endpoint", () => {
       stdio: { command: "unused", args: [] },
       env: {},
       instructions: { passthrough: true },
+      principal: { enabled: false },
       tools: { deny: [] },
     });
     const app = createApp({
@@ -623,6 +627,7 @@ describe("mcp endpoint", () => {
       stdio: { command: "unused", args: [] },
       env: {},
       instructions: { passthrough: true },
+      principal: { enabled: false },
       tools: { deny: [] },
     });
     const app = createApp({
@@ -905,5 +910,228 @@ describe("reserved metadata at the stdio boundary", () => {
     }));
 
     return { client, warnings };
+  }
+});
+
+describe("principal propagation across the stdio trust boundary", () => {
+  const clients: Client[] = [];
+  const backends: StdioMcpBackend[] = [];
+
+  afterEach(async () => {
+    await Promise.all(clients.map((client) => client.close()));
+    await Promise.all(backends.map((stdioBackend) => stdioBackend.close()));
+    clients.length = 0;
+    backends.length = 0;
+  });
+
+  it("asserts a user principal for OIDC authentication", async () => {
+    const served = await serve({ enabled: true, auth: oidcResult() });
+
+    const meta = await callAndReadMeta(served.client);
+
+    expect(meta?.[PRINCIPAL_META_KEY]).toEqual({
+      issuer: "https://idp.example.com",
+      subject: "idp-subject",
+      subject_type: "user",
+      auth_kind: "oidc",
+      client_id: "idp-client",
+      email: "person@example.com",
+      scopes: ["levitate:read"],
+      asserted_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/),
+    });
+  });
+
+  it("asserts an owner principal for Levitate AS authentication", async () => {
+    const served = await serve({ enabled: true, auth: levitateResult() });
+
+    const meta = await callAndReadMeta(served.client);
+    const principal = meta?.[PRINCIPAL_META_KEY] as Record<string, unknown>;
+
+    expect(principal.subject_type).toBe("owner");
+    expect(principal.auth_kind).toBe("levitate");
+    expect(principal.subject).toBe("local-owner");
+    expect(principal).not.toHaveProperty("email");
+  });
+
+  it("replaces a forged principal rather than merging with it", async () => {
+    const served = await serve({ enabled: true, auth: oidcResult() });
+
+    const meta = await callAndReadMeta(served.client, {
+      [PRINCIPAL_META_KEY]: { subject: "attacker", subject_type: "user", auth_kind: "oidc" },
+    });
+    const principal = meta?.[PRINCIPAL_META_KEY] as Record<string, unknown>;
+
+    expect(principal.subject).toBe("idp-subject");
+    expect(JSON.stringify(meta)).not.toContain("attacker");
+    expect(served.warnings).toContainEqual(expect.objectContaining({
+      message: "stripped reserved metadata from request",
+    }));
+  });
+
+  it("gives an opted-out backend no principal even when one is forged", async () => {
+    const served = await serve({ enabled: false, auth: oidcResult() });
+
+    const meta = await callAndReadMeta(served.client, {
+      [PRINCIPAL_META_KEY]: { subject: "attacker", subject_type: "user" },
+    });
+
+    expect(meta).toBeUndefined();
+  });
+
+  it("keeps case-variant reserved keys out with propagation enabled", async () => {
+    const served = await serve({ enabled: true, auth: oidcResult() });
+
+    const meta = await callAndReadMeta(served.client, {
+      "IO.GitHub.Iomz.Levitate/principal": { subject: "case-variant" },
+    });
+
+    expect(Object.keys(meta ?? {})).toEqual([PRINCIPAL_META_KEY]);
+    expect(JSON.stringify(meta)).not.toContain("case-variant");
+  });
+
+  it("forwards unrelated metadata alongside the asserted principal", async () => {
+    const served = await serve({ enabled: true, auth: oidcResult() });
+
+    const meta = await callAndReadMeta(served.client, { "com.example/trace": { id: "t1" } });
+
+    expect(meta?.["com.example/trace"]).toEqual({ id: "t1" });
+    expect(meta?.[PRINCIPAL_META_KEY]).toBeDefined();
+  });
+
+  it("leaves an opted-out backend's request exactly as before", async () => {
+    const served = await serve({ enabled: false, auth: oidcResult() });
+
+    const result = await served.client.callTool({
+      name: "fake_allowed",
+      arguments: { message: "hello" },
+    });
+
+    expect(echoed(result)).toEqual({ tool: "fake_allowed", arguments: { message: "hello" } });
+    expect(served.warnings).toEqual([]);
+  });
+
+  it("refuses to assert a principal for bearer authentication at runtime", async () => {
+    const served = await serve({
+      enabled: true,
+      auth: { kind: "bearer", subject: "bearer-token", scopes: [], issuer: "https://levitate.example.com" },
+    });
+
+    const meta = await callAndReadMeta(served.client);
+
+    expect(meta).toBeUndefined();
+    expect(served.warnings).toContainEqual(expect.objectContaining({
+      message: "principal not asserted",
+    }));
+  });
+
+  it("does not mutate the caller's request when attaching the principal", async () => {
+    const stdioConfig: LevitateConfig = {
+      ...config,
+      stdio: {
+        command: process.execPath,
+        args: [resolve(repoRoot, "test/fixtures/fake-stdio-server.mjs")],
+      },
+      principal: { enabled: true },
+      tools: { deny: [] },
+    };
+    const stdioBackend = new StdioMcpBackend(getBackendConfigs(stdioConfig)[0], logger);
+    await stdioBackend.start();
+    backends.push(stdioBackend);
+    const { principal } = buildPrincipal(oidcResult());
+    // The proxy still owns this object after the call returns.
+    const meta = { "com.example/trace": "t1" };
+    const params = { name: "fake_allowed", arguments: {}, _meta: meta };
+
+    const result = await stdioBackend.callTool(params, principal);
+
+    expect(echoed(result).meta).toHaveProperty(PRINCIPAL_META_KEY);
+    expect(params._meta).toBe(meta);
+    expect(Object.keys(meta)).toEqual(["com.example/trace"]);
+  });
+
+  it("leaves tools/list unaugmented when propagation is enabled", async () => {
+    const enabled = await serve({ enabled: true, auth: oidcResult() });
+    const disabled = await serve({ enabled: false, auth: oidcResult() });
+
+    const withPrincipal = await enabled.client.listTools();
+    const without = await disabled.client.listTools();
+
+    expect(withPrincipal).toEqual(without);
+    expect(JSON.stringify(withPrincipal)).not.toContain("io.github.iomz.levitate");
+  });
+
+  function echoed(result: unknown): Record<string, unknown> {
+    const content = (result as CallToolResult).content as { text: string }[];
+    return JSON.parse(content[0].text) as Record<string, unknown>;
+  }
+
+  async function callAndReadMeta(
+    client: Client,
+    meta?: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | undefined> {
+    const result = await client.callTool({
+      name: "fake_allowed",
+      arguments: {},
+      ...(meta ? { _meta: meta } : {}),
+    });
+    return echoed(result).meta as Record<string, unknown> | undefined;
+  }
+
+  async function serve(options: { enabled: boolean; auth: AuthResult }) {
+    const warnings: { message: string }[] = [];
+    const recordingLogger: Logger = {
+      ...logger,
+      warn: (message) => warnings.push({ message }),
+    };
+    const stdioConfig: LevitateConfig = {
+      ...config,
+      stdio: {
+        command: process.execPath,
+        args: [resolve(repoRoot, "test/fixtures/fake-stdio-server.mjs")],
+      },
+      principal: { enabled: options.enabled },
+      tools: { deny: [] },
+    };
+    const backendConfig = getBackendConfigs(stdioConfig)[0];
+    const stdioBackend = new StdioMcpBackend(backendConfig, recordingLogger);
+    await stdioBackend.start();
+    backends.push(stdioBackend);
+
+    const authenticator: Authenticator = { authenticate: async () => options.auth };
+    const app = createApp({
+      config: stdioConfig,
+      authenticator,
+      backend: stdioBackend,
+      logger: recordingLogger,
+    });
+    const client = new Client({ name: "test-client", version: "0.1.0" }, { capabilities: {} });
+    clients.push(client);
+    await client.connect(new StreamableHTTPClientTransport(new URL("http://localhost/mcp"), {
+      requestInit: { headers: { authorization: "Bearer secret" } },
+      fetch: async (input, init) => app.fetch(new Request(input, init)),
+    }));
+
+    return { client, warnings };
+  }
+
+  function oidcResult(): AuthResult {
+    return {
+      kind: "oidc",
+      subject: "idp-subject",
+      email: "person@example.com",
+      clientId: "idp-client",
+      issuer: "https://idp.example.com",
+      scopes: ["levitate:read"],
+    };
+  }
+
+  function levitateResult(): AuthResult {
+    return {
+      kind: "levitate",
+      subject: "local-owner",
+      clientId: "https://chatgpt.com/connector",
+      issuer: "https://levitate.example.com",
+      scopes: ["gateway:access"],
+    };
   }
 });

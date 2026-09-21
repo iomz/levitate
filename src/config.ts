@@ -247,6 +247,10 @@ const InstructionsSchema = z.object({
   passthrough: z.boolean().default(true),
 }).default({ passthrough: true });
 
+const PrincipalSchema = z.object({
+  enabled: z.boolean().default(false),
+}).default({ enabled: false });
+
 const ToolsSchema = z.object({
   allow: z.array(z.string().min(1)).optional(),
   deny: z.array(z.string().min(1)).default([]),
@@ -259,6 +263,7 @@ const NamedBackendSchema = z.object({
   env: z.record(z.string()).default({}),
   instructions: InstructionsSchema,
   tools: ToolsSchema,
+  principal: PrincipalSchema,
 });
 
 const ConfigSchema = z.object({
@@ -276,6 +281,7 @@ const ConfigSchema = z.object({
   backends: z.record(NamedBackendSchema).optional(),
   env: z.record(z.string()).default({}),
   instructions: InstructionsSchema,
+  principal: PrincipalSchema,
   auth: AuthSchema,
   oauth: z.object({
     resource: OAuthResourceSchema.default({ enabled: false }),
@@ -327,6 +333,23 @@ const ConfigSchema = z.object({
       path: ["auth", "mode"],
     });
   }
+  // bearer authentication resolves no person: its subject is the placeholder
+  // "bearer-token". Refusing here means a deployment cannot quietly ship a
+  // fabricated identity to a backend that is about to act on it.
+  const principalBackends = backendEntries
+    .filter(([, backend]) => backend.principal.enabled)
+    .map(([id]) => id);
+  if (value.stdio && value.principal.enabled) principalBackends.push("stdio");
+  if (value.auth.mode === "bearer" && principalBackends.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "principal.enabled requires auth.mode oidc or levitate; bearer authentication identifies no principal " +
+        `(enabled for: ${principalBackends.join(", ")})`,
+      path: ["auth", "mode"],
+    });
+  }
+
   if (value.auth.mode === "levitate" && !value.oauth.as.enabled) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -372,6 +395,7 @@ export interface BackendConfig {
   env: Record<string, string>;
   instructions: z.infer<typeof InstructionsSchema>;
   tools: z.infer<typeof ToolsSchema>;
+  principal: z.infer<typeof PrincipalSchema>;
 }
 
 export function getBackendConfigs(config: LevitateConfig): BackendConfig[] {
@@ -384,10 +408,11 @@ export function getBackendConfigs(config: LevitateConfig): BackendConfig[] {
       env: backend.env,
       instructions: backend.instructions,
       tools: backend.tools,
+      principal: backend.principal,
     }));
   }
   if (!config.stdio) throw new Error("stdio backend configuration missing");
-  return [{ id: "default", name: config.server.name, mcp_path: config.server.mcp_path, stdio: config.stdio, env: config.env, instructions: config.instructions, tools: config.tools }];
+  return [{ id: "default", name: config.server.name, mcp_path: config.server.mcp_path, stdio: config.stdio, env: config.env, instructions: config.instructions, tools: config.tools, principal: config.principal }];
 }
 
 export function parseConfigText(text: string): LevitateConfig {

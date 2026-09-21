@@ -41,6 +41,7 @@ const config: LevitateConfig = {
   },
   env: {},
   instructions: { passthrough: true },
+  principal: { enabled: false },
   auth: {
     mode: "oidc",
     issuer,
