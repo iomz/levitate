@@ -1,7 +1,7 @@
 import { createPrivateKey } from "node:crypto";
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { LevitateConfig } from "../src/config.js";
 import { runOAuthKeysCommand } from "../src/oauth/as/keys-cli.js";
@@ -58,6 +58,58 @@ describe("oauth signing key CLI", () => {
     expect(output.text()).toContain("every client must reauthorize");
   });
 
+  it("creates the key directory without access for other local users", async () => {
+    const privateKeyFile = keyFileInFreshStateDirectory();
+
+    await runOAuthKeysCommand(keysConfig(privateKeyFile), ["init"], captureStdout());
+
+    expect(statSync(dirname(privateKeyFile)).mode & 0o777).toBe(0o700);
+  });
+
+  it("replaces through a rename rather than following a symlink at the destination", async () => {
+    const privateKeyFile = keyFileInFreshStateDirectory();
+    const config = keysConfig(privateKeyFile);
+    await runOAuthKeysCommand(config, ["init"], captureStdout());
+
+    // Point the configured path at an unrelated file, as a local attacker able
+    // to write in the directory could.
+    const decoy = join(dirname(privateKeyFile), "decoy.txt");
+    writeFileSync(decoy, "untouched", "utf8");
+    const linked = join(dirname(privateKeyFile), "linked-key.pem");
+    symlinkSync(decoy, linked);
+    const linkedConfig = keysConfig(linked);
+
+    await runOAuthKeysCommand(linkedConfig, ["init", "--force"], captureStdout());
+
+    expect(readFileSync(decoy, "utf8")).toBe("untouched");
+    expect(lstatSync(linked).isSymbolicLink()).toBe(false);
+    expect(readFileSync(linked, "utf8")).toContain("BEGIN PRIVATE KEY");
+    expect(statSync(linked).mode & 0o777).toBe(0o600);
+  });
+
+  it("refuses a symlinked destination without --force and leaves its target alone", async () => {
+    const privateKeyFile = keyFileInFreshStateDirectory();
+    await runOAuthKeysCommand(keysConfig(privateKeyFile), ["init"], captureStdout());
+    const decoy = join(dirname(privateKeyFile), "decoy.txt");
+    writeFileSync(decoy, "untouched", "utf8");
+    const linked = join(dirname(privateKeyFile), "linked-key.pem");
+    symlinkSync(decoy, linked);
+
+    await expect(
+      runOAuthKeysCommand(keysConfig(linked), ["init"], captureStdout()),
+    ).rejects.toThrow(/already exists.*--force/s);
+    expect(readFileSync(decoy, "utf8")).toBe("untouched");
+  });
+
+  it("leaves no temporary key material behind", async () => {
+    const privateKeyFile = keyFileInFreshStateDirectory();
+    const config = keysConfig(privateKeyFile);
+    await runOAuthKeysCommand(config, ["init"], captureStdout());
+    await runOAuthKeysCommand(config, ["init", "--force"], captureStdout());
+
+    expect(readdirSync(dirname(privateKeyFile))).toEqual(["oauth-private-key.pem"]);
+  });
+
   it("names the init command when the key file is missing", async () => {
     const privateKeyFile = keyFileInFreshStateDirectory();
 
@@ -94,7 +146,7 @@ function keysConfig(privateKeyFile: string): LevitateConfig {
     },
     stdio: { command: "node", args: [] },
     env: {},
-    instructions: {},
+    instructions: { passthrough: true },
     auth: { mode: "bearer", token: "secret" },
     oauth: {
       resource: {

@@ -177,8 +177,9 @@ Create the key explicitly before the first start:
 levitate oauth keys init --config config/oauth-as.local.toml
 ```
 
-The command writes an RSA-3072 key in PKCS#8 PEM to the configured `private_key_file` with mode `0600`, creating the parent directory if needed, and reports the configured `key_id` alongside the published JWK thumbprint.
+The command writes an RSA-3072 key in PKCS#8 PEM to the configured `private_key_file` with mode `0600`, creating the parent directory with mode `0700` if needed, and reports the configured `key_id` alongside the published JWK thumbprint.
 It refuses to overwrite an existing key unless `--force` is passed.
+A replacement is written to a new file and renamed over the destination, so it neither follows a symbolic link left at that path nor leaves a truncated key behind if the command is interrupted.
 
 The local server exposes:
 
