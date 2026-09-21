@@ -174,7 +174,8 @@ This lets a private backend expose read-only or append-only tools while hiding d
 
 Levitate strips every inbound entry under that namespace before forwarding a request to a backend, so a remote client cannot put metadata on the wire wearing Levitate's name.
 Stripping is unconditional and applies to every backend, including backends that know nothing about Levitate.
-All other `_meta` entries are forwarded unchanged; a request carrying only reserved keys reaches the backend indistinguishable from one that carried none.
+All other `_meta` entries are forwarded rather than filtered by Levitate; a request carrying only reserved keys reaches the backend indistinguishable from one that carried none.
+They are not preserved byte-for-byte: inbound `_meta` is parsed before the sanitizer runs, and that parse normalizes some input, dropping an own `__proto__` key for example.
 
 Matching ignores case, because no legitimate key differs from this namespace by case alone.
 
