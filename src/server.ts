@@ -239,11 +239,14 @@ function getPathScopedResourceMetadataPath(protectedPath: string): string {
  * Builds the principal for one request, for a backend that opted in.
  *
  * A backend that did not opt in never reaches buildPrincipal, so its requests
- * are byte-identical to what they were before propagation existed. When a
- * principal cannot be asserted the request still proceeds without one: a
- * backend relying on propagation treats an absent principal as unauthenticated
- * and refuses the operation, which fails closed without turning every
- * unidentifiable caller into a gateway error.
+ * are byte-identical to what they were before propagation existed.
+ *
+ * Returning undefined here does not mean the call proceeds without a
+ * principal. For a backend that opted in, StdioMcpBackend.callTool refuses the
+ * call outright and never invokes the backend — that check is the enforcement
+ * point and must not be removed on the strength of anything decided here. This
+ * function only resolves the principal and records why one could not be built;
+ * the refusal reason is logged here because this is where it is known.
  */
 function resolvePrincipal(
   backendConfig: BackendConfig,
