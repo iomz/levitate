@@ -168,6 +168,16 @@ Levitate filters backend tools before advertising them to remote clients.
 
 This lets a private backend expose read-only or append-only tools while hiding destructive tools.
 
+## Reserved MCP Metadata
+
+`io.github.iomz.levitate/*` in MCP request `_meta` is reserved for metadata Levitate itself authors.
+
+Levitate strips every inbound entry under that namespace before forwarding a request to a backend, so a remote client cannot put metadata on the wire wearing Levitate's name.
+Stripping is unconditional and applies to every backend, including backends that know nothing about Levitate.
+All other `_meta` entries are forwarded unchanged; a request carrying only reserved keys reaches the backend indistinguishable from one that carried none.
+
+Matching ignores case, because no legitimate key differs from this namespace by case alone.
+
 ## Server Instructions
 
 A backend's own instructions — the orientation text its MCP server returns from `initialize` — are forwarded to remote clients unchanged by default.

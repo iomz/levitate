@@ -10,6 +10,7 @@ import type {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { BackendConfig } from "../config.js";
 import type { Logger } from "../logging.js";
+import { stripReservedMeta } from "./meta.js";
 
 export class StdioMcpBackend {
   private readonly client = new Client(
@@ -73,11 +74,24 @@ export class StdioMcpBackend {
   }
 
   async listTools(): Promise<ListToolsResult> {
+    // No client-supplied params are forwarded here. Anything added later must
+    // pass through stripReservedMeta first.
     return this.client.listTools();
   }
 
   async callTool(params: CallToolRequest["params"]): Promise<CallToolResult> {
-    return this.client.callTool(params) as Promise<CallToolResult>;
+    // Sanitizing here rather than in the proxy keeps the rule at the process
+    // boundary, so it covers every request forwarded to the backend including
+    // any handler added later.
+    const { params: sanitized, strippedKeys } = stripReservedMeta(params);
+    if (strippedKeys.length) {
+      this.logger.warn("stripped reserved metadata from request", {
+        backend: this.config.id,
+        tool: params.name,
+        keys: strippedKeys,
+      });
+    }
+    return this.client.callTool(sanitized) as Promise<CallToolResult>;
   }
 
   async close(): Promise<void> {

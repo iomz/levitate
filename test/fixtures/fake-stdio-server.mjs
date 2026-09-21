@@ -43,9 +43,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => ({
   content: [
     {
       type: "text",
+      // _meta is echoed only when present, so callers that send none see the
+      // same payload as before.
       text: JSON.stringify({
         tool: request.params.name,
         arguments: request.params.arguments ?? {},
+        ...(request.params._meta ? { meta: request.params._meta } : {}),
       }),
     },
   ],
