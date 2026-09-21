@@ -244,7 +244,8 @@ const StdioSchema = z.object({
 const InstructionsSchema = z.object({
   text: z.string().optional(),
   file: z.string().min(1).optional(),
-}).default({});
+  passthrough: z.boolean().default(true),
+}).default({ passthrough: true });
 
 const ToolsSchema = z.object({
   allow: z.array(z.string().min(1)).optional(),

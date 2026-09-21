@@ -6,9 +6,14 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
+export const instructions = [
+  "Fixture backend for Levitate proxy tests.",
+  "It knows nothing beyond the two tools it advertises.",
+].join("\n");
+
 const server = new Server(
   { name: "levitate-fake-stdio", version: "0.1.0" },
-  { capabilities: { tools: {} } },
+  { capabilities: { tools: {} }, instructions },
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({

@@ -68,6 +68,10 @@ export class StdioMcpBackend {
     });
   }
 
+  getInstructions(): string | undefined {
+    return this.client.getInstructions();
+  }
+
   async listTools(): Promise<ListToolsResult> {
     return this.client.listTools();
   }
