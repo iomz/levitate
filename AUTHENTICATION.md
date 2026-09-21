@@ -169,7 +169,17 @@ mode = "levitate"
 
 `oauth.as.keys.private_key_file` must point to an existing RSA private key.
 Levitate fails startup when the local authorization server is enabled and the key is missing, unreadable, invalid, or unusable for RS256.
-Levitate does not generate signing keys at runtime.
+Levitate never generates signing keys at runtime, because a missing file is more often a wiped state directory or an unmounted volume than a first run, and minting a key in that case would silently invalidate every issued token instead of reporting the problem.
+
+Create the key explicitly before the first start:
+
+```sh
+levitate oauth keys init --config config/oauth-as.local.toml
+```
+
+The command writes an RSA-3072 key in PKCS#8 PEM to the configured `private_key_file` with mode `0600`, creating the parent directory with mode `0700` if needed, and reports the configured `key_id` alongside the published JWK thumbprint.
+It refuses to overwrite an existing key unless `--force` is passed.
+A replacement is written to a new file and renamed over the destination, so it neither follows a symbolic link left at that path nor leaves a truncated key behind if the command is interrupted.
 
 The local server exposes:
 
@@ -302,7 +312,7 @@ Future multi-node storage can implement internal client-store interface without 
 
 Current signing configuration supports one active RSA key and publishes one JWK.
 Changing the private key or key ID invalidates every token signed by the previous key immediately.
-Safe current rotation procedure: stop Levitate, replace the key file, change `oauth.as.keys.key_id`, restart Levitate, then reauthorize clients.
+Safe current rotation procedure: stop Levitate, replace the key file with `levitate oauth keys init --config <config> --force`, change `oauth.as.keys.key_id`, restart Levitate, then reauthorize clients.
 Overlapping old/new verification keys and zero-interruption rotation are not implemented.
 
 OAuth rate limits are optional and process-local.
