@@ -3,7 +3,7 @@ import { createAuthenticator } from "./auth/index.js";
 import { getBackendConfigs, getConfigPath, loadConfig } from "./config.js";
 import { createLogger } from "./logging.js";
 import { StdioMcpBackend } from "./mcp/backend.js";
-import { loadInstructions } from "./mcp/instructions.js";
+import { resolveInstructions } from "./mcp/instructions.js";
 import { runOAuthClientsCommand } from "./oauth/as/clients-cli.js";
 import { loadAuthorizationServerKeys } from "./oauth/as/keys.js";
 import { createOAuthAuthorizationServer } from "./oauth/as/routes.js";
@@ -27,11 +27,13 @@ async function main(): Promise<void> {
 
   const authenticator = createAuthenticator(config, authorizationServerKeys);
   const backendConfigs = getBackendConfigs(config);
-  const backends = await Promise.all(backendConfigs.map(async (backendConfig) => ({
+  const backends = backendConfigs.map((backendConfig) => ({
     config: backendConfig,
     backend: new StdioMcpBackend(backendConfig, logger),
-    instructions: await loadInstructions(backendConfig),
-  })));
+    // Resolved once the backend has completed its initialize handshake, since
+    // the backend's own instructions are only available from that result.
+    instructions: undefined as string | undefined,
+  }));
 
   logger.info("levitate starting", {
     name: config.server.name,
@@ -44,6 +46,11 @@ async function main(): Promise<void> {
     for (const runtime of backends) {
       await runtime.backend.start();
       startedBackends.push(runtime.backend);
+      runtime.instructions = await resolveInstructions(
+        runtime.config,
+        runtime.backend,
+        logger,
+      );
     }
     server = startHttpServer({
       config,

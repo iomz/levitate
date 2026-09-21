@@ -65,6 +65,7 @@ npx -y @modelcontextprotocol/inspector@0.22.0 \
 Expected result:
 
 - initialization succeeds
+- initialization returns the fixture backend's own instructions, because no `[instructions]` block overrides them
 - `tools/list` advertises `fake_allowed`
 - `fake_denied` is not advertised
 - calling `fake_allowed` returns fixture JSON

@@ -13,6 +13,7 @@ import { BearerAuthenticator } from "../src/auth/bearer.js";
 import { getBackendConfigs, type LevitateConfig } from "../src/config.js";
 import type { Logger } from "../src/logging.js";
 import { StdioMcpBackend } from "../src/mcp/backend.js";
+import { resolveInstructions } from "../src/mcp/instructions.js";
 import { createApp } from "../src/server.js";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -40,7 +41,7 @@ const config: LevitateConfig = {
     args: [],
   },
   env: {},
-  instructions: {},
+  instructions: { passthrough: true },
   auth: {
     mode: "bearer",
     token: "secret",
@@ -498,7 +499,7 @@ describe("mcp endpoint", () => {
       mcp_path: path,
       stdio: { command: "unused", args: [] },
       env: {},
-      instructions: {},
+      instructions: { passthrough: true },
       tools: { deny: [] },
     });
     const app = createApp({
@@ -620,7 +621,7 @@ describe("mcp endpoint", () => {
       mcp_path: path,
       stdio: { command: "unused", args: [] },
       env: {},
-      instructions: {},
+      instructions: { passthrough: true },
       tools: { deny: [] },
     });
     const app = createApp({
@@ -711,4 +712,86 @@ describe("mcp endpoint", () => {
       },
     ]);
   });
+});
+
+describe("backend instructions", () => {
+  const clients: Client[] = [];
+  const backends: StdioMcpBackend[] = [];
+
+  afterEach(async () => {
+    await Promise.all(clients.map((client) => client.close()));
+    await Promise.all(backends.map((stdioBackend) => stdioBackend.close()));
+    clients.length = 0;
+    backends.length = 0;
+  });
+
+  it("forwards a backend's own instructions to the remote client", async () => {
+    const served = await serveStdioBackend({ passthrough: true });
+
+    expect(served.client.getInstructions()).toContain(
+      "Fixture backend for Levitate proxy tests.",
+    );
+  });
+
+  it("prefers configured instructions over the backend's", async () => {
+    const served = await serveStdioBackend({
+      text: "Configured instructions.",
+      passthrough: true,
+    });
+
+    expect(served.client.getInstructions()).toBe("Configured instructions.");
+    expect(served.entries).toContainEqual(expect.objectContaining({
+      message: "backend instructions overridden by configuration",
+    }));
+  });
+
+  it("suppresses backend instructions when passthrough is disabled", async () => {
+    const served = await serveStdioBackend({ passthrough: false });
+
+    expect(served.client.getInstructions()).toBeUndefined();
+    expect(served.entries).toContainEqual(expect.objectContaining({
+      message: "backend instructions suppressed by configuration",
+    }));
+  });
+
+  async function serveStdioBackend(instructions: {
+    text?: string;
+    file?: string;
+    passthrough: boolean;
+  }) {
+    const entries: { message: string }[] = [];
+    const recordingLogger: Logger = {
+      ...logger,
+      info: (message) => entries.push({ message }),
+    };
+    const stdioConfig: LevitateConfig = {
+      ...config,
+      stdio: {
+        command: process.execPath,
+        args: [resolve(repoRoot, "test/fixtures/fake-stdio-server.mjs")],
+      },
+      instructions,
+      tools: { deny: [] },
+    };
+    const backendConfig = getBackendConfigs(stdioConfig)[0];
+    const stdioBackend = new StdioMcpBackend(backendConfig, recordingLogger);
+    await stdioBackend.start();
+    backends.push(stdioBackend);
+
+    const app = createApp({
+      config: stdioConfig,
+      authenticator: new BearerAuthenticator("secret"),
+      backend: stdioBackend,
+      instructions: await resolveInstructions(backendConfig, stdioBackend, recordingLogger),
+      logger: recordingLogger,
+    });
+    const client = new Client({ name: "test-client", version: "0.1.0" }, { capabilities: {} });
+    clients.push(client);
+    await client.connect(new StreamableHTTPClientTransport(new URL("http://localhost/mcp"), {
+      requestInit: { headers: { authorization: "Bearer secret" } },
+      fetch: async (input, init) => app.fetch(new Request(input, init)),
+    }));
+
+    return { client, entries };
+  }
 });

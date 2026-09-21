@@ -33,6 +33,9 @@ mcp_path = "/admin/mcp"
 command = "node"
 args = ["test/fixtures/fake-stdio-server.mjs"]
 
+# Configured text replaces whatever the backend advertises.
+# Omit this block to forward the backend's own instructions, or set
+# passthrough = false to suppress them without replacing them.
 [backends.admin.instructions]
 text = "Restricted administrative endpoint."
 

@@ -168,14 +168,14 @@ describe("oauth authorization server facade", () => {
         mcp_path: "/notes/mcp",
         stdio: { command: "unused", args: [] },
         env: {},
-        instructions: {},
+        instructions: { passthrough: true },
         tools: { allow: ["search"], deny: [] },
       },
       ingest: {
         mcp_path: "/ingest/mcp",
         stdio: { command: "unused", args: [] },
         env: {},
-        instructions: {},
+        instructions: { passthrough: true },
         tools: { allow: ["search"], deny: [] },
       },
     };
@@ -1080,7 +1080,7 @@ function createTestConfig(options: TestOptions = {}) {
       args: [],
     },
     env: {},
-    instructions: {},
+    instructions: { passthrough: true },
     auth: {
       mode: "levitate",
     },

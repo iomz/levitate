@@ -170,14 +170,27 @@ This lets a private backend expose read-only or append-only tools while hiding d
 
 ## Server Instructions
 
-Instructions can be configured inline or loaded from a file:
+A backend's own instructions — the orientation text its MCP server returns from `initialize` — are forwarded to remote clients unchanged by default.
+Instructions are part of MCP discovery, and they are the only place a server can state what it does *not* know, so dropping them at the gateway makes an empty result indistinguishable from a boundary.
+
+Instructions can instead be configured inline or loaded from a file, which replaces whatever the backend advertises:
 
 ```toml
 [instructions]
 file = "/path/to/SKILL.md"
 ```
 
+Per backend, the advertised value resolves in this order:
+
+1. `instructions.text`, when set.
+2. `instructions.file`, when set.
+3. The backend's own instructions from its initialize result.
+
+Set `instructions.passthrough = false` to suppress a backend's text without replacing it.
+Levitate logs which source applied, so a backend author can see whether their text was forwarded, overridden, or suppressed.
+
 Levitate passes instructions through MCP server initialization using official TypeScript SDK `Server` `instructions` option.
+Because the backend value arrives from its handshake, it is resolved once the backend process has started rather than at configuration load.
 
 ## Multi-backend Routing
 
