@@ -249,15 +249,21 @@ file = "/path/to/SKILL.md"
 
 Per backend, the advertised value resolves in this order:
 
-1. `instructions.text`, when set.
-2. `instructions.file`, when set.
+1. `instructions.text`, when set and not empty.
+2. `instructions.file`, when set and not empty.
 3. The backend's own instructions from its initialize result.
+
+A file containing nothing but whitespace counts as unset, the same as an empty `instructions.text`.
+Otherwise truncating a file would suppress the backend's own instructions and serve an empty string in their place, with nothing to say so.
 
 Set `instructions.passthrough = false` to suppress a backend's text without replacing it.
 Levitate logs which source applied, so a backend author can see whether their text was forwarded, overridden, or suppressed.
 
 Levitate passes instructions through MCP server initialization using official TypeScript SDK `Server` `instructions` option.
-Because the backend value arrives from its handshake, it is resolved once the backend process has started rather than at configuration load.
+
+A configured file that cannot be read fails startup, naming the backend and the path.
+Configuring one states that its text should be served in place of whatever the backend advertises, so serving something else instead would be the same silent substitution Levitate refuses to make in the other direction.
+Every configured file is read before any backend process is spawned, so a bad path costs no start and stop cycle; the backend's own value arrives from its handshake and is combined with the configured one once it has started.
 
 ## Multi-backend Routing
 
