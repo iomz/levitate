@@ -15,7 +15,7 @@ import { buildPrincipal } from "../src/auth/principal.js";
 import { getBackendConfigs, type LevitateConfig } from "../src/config.js";
 import type { Logger } from "../src/logging.js";
 import { StdioMcpBackend } from "../src/mcp/backend.js";
-import { resolveInstructions } from "../src/mcp/instructions.js";
+import { loadInstructions, resolveInstructions } from "../src/mcp/instructions.js";
 import { LEVITATE_META_PREFIX, PRINCIPAL_META_KEY } from "../src/mcp/meta.js";
 import { createApp } from "../src/server.js";
 
@@ -788,7 +788,12 @@ describe("backend instructions", () => {
       config: stdioConfig,
       authenticator: new BearerAuthenticator("secret"),
       backend: stdioBackend,
-      instructions: await resolveInstructions(backendConfig, stdioBackend, recordingLogger),
+      instructions: resolveInstructions(
+        backendConfig,
+        await loadInstructions(backendConfig),
+        stdioBackend,
+        recordingLogger,
+      ),
       logger: recordingLogger,
     });
     const client = new Client({ name: "test-client", version: "0.1.0" }, { capabilities: {} });

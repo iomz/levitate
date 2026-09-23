@@ -3,7 +3,7 @@ import { createAuthenticator } from "./auth/index.js";
 import { getBackendConfigs, getConfigPath, loadConfig } from "./config.js";
 import { createLogger } from "./logging.js";
 import { StdioMcpBackend } from "./mcp/backend.js";
-import { resolveInstructions } from "./mcp/instructions.js";
+import { loadInstructions, resolveInstructions } from "./mcp/instructions.js";
 import { runOAuthClientsCommand } from "./oauth/as/clients-cli.js";
 import { runOAuthKeysCommand } from "./oauth/as/keys-cli.js";
 import { loadAuthorizationServerKeys } from "./oauth/as/keys.js";
@@ -32,13 +32,16 @@ async function main(): Promise<void> {
 
   const authenticator = createAuthenticator(config, authorizationServerKeys);
   const backendConfigs = getBackendConfigs(config);
-  const backends = backendConfigs.map((backendConfig) => ({
+  // Configured instructions files are read here, before any backend process is
+  // spawned, so a misconfigured path fails without costing a start and stop
+  // cycle. The backend's own instructions are only available from its
+  // handshake, so the two are combined once it has started.
+  const backends = await Promise.all(backendConfigs.map(async (backendConfig) => ({
     config: backendConfig,
     backend: new StdioMcpBackend(backendConfig, logger),
-    // Resolved once the backend has completed its initialize handshake, since
-    // the backend's own instructions are only available from that result.
+    configuredInstructions: await loadInstructions(backendConfig),
     instructions: undefined as string | undefined,
-  }));
+  })));
 
   logger.info("levitate starting", {
     name: config.server.name,
@@ -51,8 +54,9 @@ async function main(): Promise<void> {
     for (const runtime of backends) {
       await runtime.backend.start();
       startedBackends.push(runtime.backend);
-      runtime.instructions = await resolveInstructions(
+      runtime.instructions = resolveInstructions(
         runtime.config,
+        runtime.configuredInstructions,
         runtime.backend,
         logger,
       );
