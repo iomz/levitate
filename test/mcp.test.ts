@@ -613,6 +613,43 @@ describe("mcp endpoint", () => {
     ]);
   });
 
+  it("prefers exact advertised names over namespace aliases", async () => {
+    const exactBackend = {
+      async listTools() {
+        return {
+          tools: ["search", "test.search"].map((name) => ({
+            name,
+            inputSchema: { type: "object", properties: {} },
+          })),
+        };
+      },
+      async callTool(params: CallToolRequest["params"]) {
+        return { content: [{ type: "text" as const, text: `called ${params.name}` }] };
+      },
+    } as unknown as StdioMcpBackend;
+    const app = createApp({
+      config: { ...config, tools: { allow: ["search", "test.search"], deny: [] } },
+      authenticator: new BearerAuthenticator("secret"),
+      backend: exactBackend,
+      logger,
+    });
+    const client = new Client(
+      { name: "test-client", version: "0.1.0" },
+      { capabilities: {} },
+    );
+    clients.push(client);
+    await client.connect(new StreamableHTTPClientTransport(
+      new URL("http://localhost/mcp"),
+      {
+        requestInit: { headers: { authorization: "Bearer secret" } },
+        fetch: async (input, init) => app.fetch(new Request(input, init)),
+      },
+    ));
+
+    const result = await client.callTool({ name: "test.search", arguments: {} });
+    expect(result.content).toEqual([{ type: "text", text: "called test.search" }]);
+  });
+
   it("isolates named backends by MCP path", async () => {
     const namedBackend = (toolName: string) => ({
       async listTools() {

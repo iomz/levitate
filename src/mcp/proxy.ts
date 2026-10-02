@@ -38,6 +38,8 @@ export async function handleMcpRequest(
 }
 
 export function createProxyServer(options: ProxyOptions): Server {
+  let advertisedToolNames: Set<string> | undefined;
+
   const server = new Server(
     {
       name: options.serverName,
@@ -61,6 +63,7 @@ export function createProxyServer(options: ProxyOptions): Server {
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const result = await options.backend.listTools();
+    advertisedToolNames = new Set(result.tools.map((tool) => tool.name));
     const tools = filterTools(result.tools, options.policy);
     options.logger.info("tools listed", {
       backendTools: result.tools.length,
@@ -70,7 +73,14 @@ export function createProxyServer(options: ProxyOptions): Server {
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const name = normalizeToolName(request.params.name, options.serverName);
+    advertisedToolNames ??= new Set(
+      (await options.backend.listTools()).tools.map((tool) => tool.name),
+    );
+    const name = normalizeToolName(
+      request.params.name,
+      options.serverName,
+      advertisedToolNames,
+    );
     const reason = deniedReason(name, options.policy);
     if (reason) {
       options.logger.warn("tool call denied", {
@@ -103,7 +113,14 @@ export function createProxyServer(options: ProxyOptions): Server {
 }
 
 /** Accept host-added backend namespace while keeping backend tool names unchanged. */
-function normalizeToolName(name: string, serverName: string): string {
+function normalizeToolName(
+  name: string,
+  serverName: string,
+  advertisedToolNames: ReadonlySet<string>,
+): string {
+  if (advertisedToolNames.has(name)) return name;
   const prefix = `${serverName}.`;
-  return name.startsWith(prefix) ? name.slice(prefix.length) : name;
+  if (!name.startsWith(prefix)) return name;
+  const unprefixed = name.slice(prefix.length);
+  return advertisedToolNames.has(unprefixed) ? unprefixed : name;
 }
