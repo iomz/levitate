@@ -600,6 +600,9 @@ describe("mcp endpoint", () => {
     const allowed = await client.callTool({ name: "search", arguments: {} });
     expect(allowed.content).toEqual([{ type: "text", text: "called search" }]);
 
+    const namespaced = await client.callTool({ name: "test.search", arguments: {} });
+    expect(namespaced.content).toEqual([{ type: "text", text: "called search" }]);
+
     const denied = await client.callTool({ name: "delete_note", arguments: {} });
     expect(denied.isError).toBe(true);
     expect(denied.content).toEqual([
