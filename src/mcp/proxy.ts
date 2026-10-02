@@ -38,6 +38,8 @@ export async function handleMcpRequest(
 }
 
 export function createProxyServer(options: ProxyOptions): Server {
+  let advertisedToolNames: Set<string> | undefined;
+
   const server = new Server(
     {
       name: options.serverName,
@@ -61,6 +63,7 @@ export function createProxyServer(options: ProxyOptions): Server {
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const result = await options.backend.listTools();
+    advertisedToolNames = new Set(result.tools.map((tool) => tool.name));
     const tools = filterTools(result.tools, options.policy);
     options.logger.info("tools listed", {
       backendTools: result.tools.length,
@@ -70,10 +73,19 @@ export function createProxyServer(options: ProxyOptions): Server {
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const reason = deniedReason(request.params.name, options.policy);
+    advertisedToolNames ??= new Set(
+      (await options.backend.listTools()).tools.map((tool) => tool.name),
+    );
+    const name = normalizeToolName(
+      request.params.name,
+      options.serverName,
+      advertisedToolNames,
+    );
+    const reason = deniedReason(name, options.policy);
     if (reason) {
       options.logger.warn("tool call denied", {
         tool: request.params.name,
+        ...(name !== request.params.name ? { resolvedTool: name } : {}),
         reason,
       });
       return {
@@ -87,9 +99,28 @@ export function createProxyServer(options: ProxyOptions): Server {
       };
     }
 
-    options.logger.info("tool call allowed", { tool: request.params.name });
-    return options.backend.callTool(request.params, options.principal);
+    options.logger.info("tool call allowed", {
+      tool: request.params.name,
+      ...(name !== request.params.name ? { resolvedTool: name } : {}),
+    });
+    return options.backend.callTool(
+      name === request.params.name ? request.params : { ...request.params, name },
+      options.principal,
+    );
   });
 
   return server;
+}
+
+/** Accept host-added backend namespace while keeping backend tool names unchanged. */
+function normalizeToolName(
+  name: string,
+  serverName: string,
+  advertisedToolNames: ReadonlySet<string>,
+): string {
+  if (advertisedToolNames.has(name)) return name;
+  const prefix = `${serverName}.`;
+  if (!name.startsWith(prefix)) return name;
+  const unprefixed = name.slice(prefix.length);
+  return advertisedToolNames.has(unprefixed) ? unprefixed : name;
 }
