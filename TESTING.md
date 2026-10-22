@@ -8,6 +8,30 @@ pnpm typecheck
 pnpm build
 ```
 
+## eMudhra container trust regression
+
+The Dockerfiles pin Node 22.23.4 (including its bundled trust store) and Alpine
+`ca-certificates` / `ca-certificates-bundle` 20261020-r0. Host updates do not
+update either container trust store. Update these pins together when upgrading.
+See the [incident advisory](https://emudhra.we-have-a-problem.com/) and
+[Node release](https://github.com/nodejs/node/releases/tag/v22.23.4).
+
+Build a separate candidate tag; this does not replace the running container:
+
+```sh
+docker build --pull --no-cache -t levitate:emudhra-20261023 .
+docker run --rm -i --entrypoint node levitate:emudhra-20261023 \
+  --input-type=module < scripts/check-emudhra.mjs
+```
+
+For the ignored local deployment, build with `-f Dockerfile.brain-vault.local`
+and tag `levitate-levitate:emudhra-20261023` instead. Run the same check against
+that tag. The check exercises native fetch, JOSE JWKS, the compiled CIMD resolver,
+and HTTPS with the system CA bundle. Both compromised-chain hosts must produce
+certificate trust errors; DNS/connection errors and timeouts fail the check.
+Normal HTTPS must return 200 with verification enabled. No production config,
+vault, state volumes, or credentials are mounted during these checks.
+
 ## Fake stdio backend smoke test
 
 Use the fake stdio backend for deterministic local checks of Levitate's HTTP proxy and policy behavior:
