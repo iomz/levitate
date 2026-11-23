@@ -33,6 +33,8 @@ export interface BackendRuntime {
   config: BackendConfig;
   backend: StdioMcpBackend;
   instructions?: string;
+  /** Set when the backend could not be started; see startBackends. */
+  startupError?: string;
 }
 
 type AppEnv = {
@@ -81,11 +83,14 @@ export function createApp(context: AppContext): Hono<AppEnv> {
   }));
 
   app.get("/ready", (c) => {
-    const states = backends.map(({ config, backend }) => ({
+    // A failed backend is reported as such, but not why: this route is
+    // unauthenticated and the reason can name local paths. It is in the log.
+    const states = backends.map(({ config, backend, startupError }) => ({
       id: config.id,
       name: config.name,
       path: config.mcp_path,
-      ready: backend.isReady?.() ?? true,
+      ready: !startupError && (backend.isReady?.() ?? true),
+      ...(startupError ? { failed: true } : {}),
     }));
     const ready = states.every((state) => state.ready);
     return c.json({
@@ -152,6 +157,16 @@ export function createApp(context: AppContext): Hono<AppEnv> {
         return c.json({ error: "auth failed" }, error.status);
       }
       return c.json({ error: "auth failed" }, 401);
+    }
+
+    // Checked after authentication so an unauthenticated caller gets the same
+    // challenge from every backend path, failed or not.
+    if (runtime.startupError) {
+      context.logger.warn("request to failed backend", {
+        requestId: c.get("requestId"),
+        backend: runtime.config.id,
+      });
+      return c.json({ error: "backend unavailable" }, 503);
     }
 
     context.logger.info("remote mcp request", {

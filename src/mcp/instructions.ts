@@ -9,7 +9,8 @@ import type { Logger } from "../logging.js";
  * the backend was already running — meant a misconfigured path cost a start and
  * stop cycle before failing, and in a crash loop it did so every time.
  *
- * An unreadable file is fatal, deliberately. Configuring one is a statement
+ * An unreadable file fails this backend's startup, deliberately; startBackends
+ * keeps that failure from reaching other backends. Configuring one is a statement
  * that this text should be served in place of whatever the backend advertises,
  * and quietly serving something else instead is the silent substitution this
  * gateway already refuses to make in the other direction.

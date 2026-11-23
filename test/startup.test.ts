@@ -8,24 +8,37 @@ import { describe, expect, it } from "vitest";
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 /**
- * The ordering this covers lives in main(), which no other test exercises: a
- * regression that moved the instructions read back after backend.start() would
- * still satisfy every unit test, because they call the two steps directly.
+ * The ordering and isolation this covers live in main(), which no other test
+ * exercises: a regression that moved the instructions read back after
+ * backend.start(), or let one backend's failure stop the gateway, would still
+ * satisfy every unit test, because they call the steps directly.
  */
 describe("startup ordering", () => {
-  it("fails on an unreadable instructions file without spawning any backend", async () => {
-    const result = await runLevitate(configWithBrokenInstructions());
+  it("serves the healthy backend when another has an unreadable instructions file", async () => {
+    const result = await runLevitate(configText("/nonexistent/SKILL.md"), { exitAfterReady: true });
 
-    expect(result.code).toBe(1);
     // The logs are JSON lines, so assert on the record rather than on the
     // escaping of a substring.
-    const failure = logRecords(result.output).find((record) => record.message === "levitate failed");
+    const failure = logRecords(result.output).find((record) => record.message === "backend failed to start");
+    expect(failure?.backend).toBe("broken");
     expect(failure?.error).toBe(
       `backend "broken": cannot read instructions file '/nonexistent/SKILL.md': ` +
       "ENOENT: no such file or directory, open '/nonexistent/SKILL.md'",
     );
+    // Only the healthy backend is spawned; the broken one never costs a cycle.
+    expect(result.output.match(/backend process starting/g)).toHaveLength(1);
+    expect(result.output).toContain("http server starting");
+    expect(result.output).not.toContain("levitate failed");
+  }, 60_000);
+
+  it("fails without spawning anything when no backend can start", async () => {
+    const result = await runLevitate(configText("/nonexistent/SKILL.md", { allBroken: true }));
+
+    expect(result.code).toBe(1);
+    const failure = logRecords(result.output).find((record) => record.message === "levitate failed");
+    expect(failure?.error).toContain(`backend "healthy": cannot read instructions file`);
+    expect(failure?.error).toContain(`backend "broken": cannot read instructions file`);
     expect(result.output).not.toContain("backend process starting");
-    expect(result.output).not.toContain("backend process started");
   }, 60_000);
 
   it("starts backends when every configured instructions file is readable", async () => {
@@ -33,29 +46,22 @@ describe("startup ordering", () => {
     const skill = join(directory, "SKILL.md");
     writeFileSync(skill, "# Vault\n", "utf8");
 
-    const result = await runLevitate(configWithInstructions(skill), { exitAfterReady: true });
+    const result = await runLevitate(configText(skill), { exitAfterReady: true });
 
     expect(result.output).toContain("backend process starting");
     expect(result.output).toContain("http server starting");
+    expect(result.output).not.toContain("backend failed to start");
   }, 60_000);
 });
 
-function logRecords(output: string): { message?: string; error?: string }[] {
+function logRecords(output: string): { message?: string; error?: string; backend?: string }[] {
   return output
     .split("\n")
     .filter((line) => line.startsWith("{"))
-    .map((line) => JSON.parse(line) as { message?: string; error?: string });
+    .map((line) => JSON.parse(line) as { message?: string; error?: string; backend?: string });
 }
 
-function configWithBrokenInstructions(): string {
-  return configText("/nonexistent/SKILL.md");
-}
-
-function configWithInstructions(file: string): string {
-  return configText(file);
-}
-
-function configText(instructionsFile: string): string {
+function configText(instructionsFile: string, options: { allBroken?: boolean } = {}): string {
   const fixture = resolve(repoRoot, "test/fixtures/fake-stdio-server.mjs");
   return [
     "[server]",
@@ -67,6 +73,7 @@ function configText(instructionsFile: string): string {
     "[backends.healthy.stdio]",
     `command = "${process.execPath}"`,
     `args = ["${fixture}"]`,
+    ...(options.allBroken ? ["[backends.healthy.instructions]", `file = "${instructionsFile}"`] : []),
     "",
     "[backends.broken]",
     'mcp_path = "/broken/mcp"',

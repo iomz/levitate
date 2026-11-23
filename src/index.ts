@@ -3,7 +3,7 @@ import { createAuthenticator } from "./auth/index.js";
 import { getBackendConfigs, getConfigPath, loadConfig } from "./config.js";
 import { createLogger } from "./logging.js";
 import { StdioMcpBackend } from "./mcp/backend.js";
-import { loadInstructions, resolveInstructions } from "./mcp/instructions.js";
+import { startBackends } from "./mcp/startup.js";
 import { runOAuthClientsCommand } from "./oauth/as/clients-cli.js";
 import { runOAuthKeysCommand } from "./oauth/as/keys-cli.js";
 import { loadAuthorizationServerKeys } from "./oauth/as/keys.js";
@@ -32,35 +32,22 @@ async function main(): Promise<void> {
 
   const authenticator = createAuthenticator(config, authorizationServerKeys);
   const backendConfigs = getBackendConfigs(config);
-  // Configured instructions files are read here, before any backend process is
-  // spawned, so a misconfigured path fails without costing a start and stop
-  // cycle. The backend's own instructions are only available from its
-  // handshake, so the two are combined once it has started.
-  const backends = await Promise.all(backendConfigs.map(async (backendConfig) => ({
-    config: backendConfig,
-    backend: new StdioMcpBackend(backendConfig, logger),
-    configuredInstructions: await loadInstructions(backendConfig),
-    instructions: undefined as string | undefined,
-  })));
 
   logger.info("levitate starting", {
     name: config.server.name,
     backends: backendConfigs.map(({ id, mcp_path }) => ({ id, path: mcp_path })),
   });
 
-  const startedBackends: StdioMcpBackend[] = [];
+  // A backend that cannot start is isolated rather than fatal; this throws only
+  // when none of them started, having already closed what it spawned.
+  const backends = await startBackends(
+    backendConfigs,
+    (backendConfig) => new StdioMcpBackend(backendConfig, logger),
+    logger,
+  );
+
   let server: ReturnType<typeof startHttpServer>;
   try {
-    for (const runtime of backends) {
-      await runtime.backend.start();
-      startedBackends.push(runtime.backend);
-      runtime.instructions = resolveInstructions(
-        runtime.config,
-        runtime.configuredInstructions,
-        runtime.backend,
-        logger,
-      );
-    }
     server = startHttpServer({
       config,
       authenticator,
@@ -69,7 +56,7 @@ async function main(): Promise<void> {
       oauthAuthorizationServer,
     });
   } catch (error) {
-    await Promise.allSettled(startedBackends.map((backend) => backend.close()));
+    await Promise.allSettled(backends.map(({ backend }) => backend.close()));
     throw error;
   }
   let shuttingDown = false;

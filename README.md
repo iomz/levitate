@@ -261,7 +261,7 @@ Levitate logs which source applied, so a backend author can see whether their te
 
 Levitate passes instructions through MCP server initialization using official TypeScript SDK `Server` `instructions` option.
 
-A configured file that cannot be read fails startup, naming the backend and the path.
+A configured file that cannot be read fails that backend's startup, logging the backend and the path.
 Configuring one states that its text should be served in place of whatever the backend advertises, so serving something else instead would be the same silent substitution Levitate refuses to make in the other direction.
 Every configured file is read before any backend process is spawned, so a bad path costs no start and stop cycle; the backend's own value arrives from its handshake and is combined with the configured one once it has started.
 
@@ -300,7 +300,10 @@ Named backends cannot be combined with the legacy top-level `[stdio]` configurat
 Backend paths must be unique and cannot overlap health, readiness, OAuth, or well-known routes.
 Policies, instructions, environment, process lifecycle, and readiness remain backend-specific.
 `GET /ready` succeeds only when every backend is ready and includes per-backend states.
-Startup failure closes every backend already started before Levitate exits.
+A backend that fails to start, from an unreadable instructions file or a failed spawn or handshake, is marked failed while the other backends serve.
+Its MCP path answers authenticated requests with `503`, `GET /ready` reports it with `"failed": true`, and the reason is logged at error level as `backend failed to start`.
+`GET /ready` omits the reason because it is unauthenticated and the reason can name local paths.
+Levitate exits when no backend starts.
 
 Static bearer and external OIDC authentication apply at gateway level across every backend.
 Local Levitate OAuth can also apply at gateway level when `oauth.resource.mode = "gateway"` uses one origin-level audience for every backend.
