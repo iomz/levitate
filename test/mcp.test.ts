@@ -151,6 +151,78 @@ describe("mcp endpoint", () => {
     });
   });
 
+  it("serves healthy backends while a failed one answers 503", async () => {
+    const backendConfig = (id: string, path: string) => ({
+      id,
+      name: id,
+      mcp_path: path,
+      stdio: { command: "unused", args: [] },
+      env: {},
+      instructions: { passthrough: true },
+      principal: { enabled: false },
+      tools: { deny: [] },
+    });
+    const neverStarted = {
+      ...backend,
+      isReady: () => false,
+    } as unknown as StdioMcpBackend;
+    const app = createApp({
+      config,
+      authenticator: new BearerAuthenticator("secret"),
+      backends: [
+        { config: backendConfig("healthy", "/healthy/mcp"), backend },
+        {
+          config: backendConfig("broken", "/broken/mcp"),
+          backend: neverStarted,
+          startupError: `backend "broken": cannot read instructions file '/secret/path/SKILL.md'`,
+        },
+      ],
+      logger,
+    });
+
+    const ready = await app.fetch(new Request("http://localhost/ready"));
+    expect(ready.status).toBe(503);
+    const body = await ready.text();
+    expect(JSON.parse(body)).toEqual({
+      status: "not_ready",
+      name: "test",
+      backends: [
+        { id: "healthy", name: "healthy", path: "/healthy/mcp", ready: true },
+        { id: "broken", name: "broken", path: "/broken/mcp", ready: false, failed: true },
+      ],
+    });
+    // /ready is unauthenticated, so the reason stays in the log.
+    expect(body).not.toContain("/secret/path");
+
+    const initialize = (path: string, authorization?: string) => app.fetch(new Request(
+      `http://localhost${path}`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          ...(authorization ? { authorization } : {}),
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "test", version: "0" },
+          },
+        }),
+      },
+    ));
+
+    expect((await initialize("/broken/mcp")).status).toBe(401);
+    const failed = await initialize("/broken/mcp", "Bearer secret");
+    expect(failed.status).toBe(503);
+    await expect(failed.json()).resolves.toEqual({ error: "backend unavailable" });
+    expect((await initialize("/healthy/mcp", "Bearer secret")).status).toBe(200);
+  });
+
   it("returns a validated request correlation ID", async () => {
     const app = createApp({
       config,
