@@ -168,6 +168,72 @@ token_env = "LEVITATE_TOKEN"
 `)).toThrow("bearer authentication identifies no principal");
   });
 
+  it.each([
+    ["principal", "[principal]\nenabled = true"],
+    // Rejected even when disabled: the block is inert either way, and an
+    // operator who wrote it should learn that rather than guess.
+    ["principal", "[principal]\nenabled = false"],
+    ["instructions", "[instructions]\ntext = \"Use carefully.\""],
+    ["tools", "[tools]\ndeny = [\"delete_note\"]"],
+    ["env", "[env]\nNOTES_DIR = \"/srv/notes\""],
+  ])("rejects a top-level %s block alongside named backends", (block, toml) => {
+    expect(() => parseConfigText(`
+[server]
+name = "gateway"
+${toml}
+[backends.notes]
+mcp_path = "/notes/mcp"
+[backends.notes.stdio]
+command = "notes-mcp"
+[auth]
+mode = "oidc"
+issuer = "https://issuer.example.com"
+audience = "levitate"
+`)).toThrow(`top-level ${block} has no effect with named backends; configure backends.<name>.${block} instead`);
+  });
+
+  it("reports the inert principal block rather than staying silent under bearer auth", () => {
+    // The case from #35: the block never took effect, so the bearer check saw
+    // nothing enabled and the operator got neither propagation nor an error.
+    expect(() => parseConfigText(`
+[server]
+name = "gateway"
+[principal]
+enabled = true
+[backends.notes]
+mcp_path = "/notes/mcp"
+[backends.notes.stdio]
+command = "notes-mcp"
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`)).toThrow("top-level principal has no effect with named backends");
+  });
+
+  it("still accepts top-level blocks for the legacy stdio backend", () => {
+    const config = parseConfigText(`
+[server]
+name = "gateway"
+[stdio]
+command = "node"
+[env]
+NOTES_DIR = "/srv/notes"
+[instructions]
+text = "Use carefully."
+[tools]
+deny = ["delete_note"]
+[auth]
+mode = "bearer"
+token_env = "LEVITATE_TOKEN"
+`);
+
+    const [backend] = getBackendConfigs(config);
+    expect(backend.env).toEqual({ NOTES_DIR: "/srv/notes" });
+    expect(backend.instructions).toEqual({ text: "Use carefully.", passthrough: true });
+    expect(backend.tools).toEqual({ deny: ["delete_note"] });
+    expect(backend.principal).toEqual({ enabled: false });
+  });
+
   it("rejects duplicate and reserved backend paths", () => {
     const parse = (secondPath: string) => parseConfigText(`
 [server]
