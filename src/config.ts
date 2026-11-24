@@ -279,17 +279,36 @@ const ConfigSchema = z.object({
   }),
   stdio: StdioSchema.optional(),
   backends: z.record(NamedBackendSchema).optional(),
-  env: z.record(z.string()).default({}),
-  instructions: InstructionsSchema,
-  principal: PrincipalSchema,
+  // These four configure the legacy top-level [stdio] backend only. They are
+  // left optional here, with defaults applied after validation, so validation
+  // can tell a block the operator wrote from one that was never there.
+  env: z.record(z.string()).optional(),
+  instructions: InstructionsSchema.optional(),
+  principal: PrincipalSchema.optional(),
   auth: AuthSchema,
   oauth: z.object({
     resource: OAuthResourceSchema.default({ enabled: false }),
     as: OAuthAuthorizationServerSchema.default({ enabled: false }),
   }).default({ resource: { enabled: false }, as: { enabled: false } }),
-  tools: ToolsSchema,
+  tools: ToolsSchema.optional(),
 }).superRefine((value, context) => {
   const backendEntries = Object.entries(value.backends ?? {});
+  // Named backends read only their own blocks, so a top-level one would be
+  // parsed and then silently ignored. For principal that leaves an operator
+  // believing an identity reaches a backend when none does; the others are
+  // rejected too, so one rule covers every block that cannot take effect.
+  if (value.backends !== undefined) {
+    for (const block of LEGACY_BACKEND_BLOCKS) {
+      if (value[block] === undefined) continue;
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `top-level ${block} has no effect with named backends; ` +
+          `configure backends.<name>.${block} instead`,
+        path: [block],
+      });
+    }
+  }
   if (!value.stdio && !backendEntries.length) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "stdio or backends must configure at least one backend", path: ["backends"] });
   }
@@ -339,7 +358,7 @@ const ConfigSchema = z.object({
   const principalBackends = backendEntries
     .filter(([, backend]) => backend.principal.enabled)
     .map(([id]) => id);
-  if (value.stdio && value.principal.enabled) principalBackends.push("stdio");
+  if (value.stdio && value.principal?.enabled) principalBackends.push("stdio");
   if (value.auth.mode === "bearer" && principalBackends.length) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -376,7 +395,15 @@ const ConfigSchema = z.object({
       });
     }
   }
-});
+}).transform((value) => ({
+  ...value,
+  env: value.env ?? {},
+  instructions: value.instructions ?? InstructionsSchema.parse(undefined),
+  principal: value.principal ?? PrincipalSchema.parse(undefined),
+  tools: value.tools ?? ToolsSchema.parse(undefined),
+}));
+
+const LEGACY_BACKEND_BLOCKS = ["env", "instructions", "principal", "tools"] as const;
 
 function isReservedMcpPath(path: string): boolean {
   return ["/health", "/ready"].includes(path) ||

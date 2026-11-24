@@ -190,6 +190,7 @@ enabled = true
 ```
 
 Legacy single-backend deployments use a top-level `[principal]` block.
+With named backends, a top-level `[principal]` block is a configuration error rather than silently ignored.
 
 The principal travels on `tools/call` under `io.github.iomz.levitate/principal`:
 
@@ -297,6 +298,7 @@ command = "ingest-mcp"
 ```
 
 Named backends cannot be combined with the legacy top-level `[stdio]` configuration.
+Top-level `env`, `[instructions]`, `[tools]`, and `[principal]` configure only that legacy backend, so with named backends each is a configuration error naming `backends.<name>.<block>` as the fix.
 Backend paths must be unique and cannot overlap health, readiness, OAuth, or well-known routes.
 Policies, instructions, environment, process lifecycle, and readiness remain backend-specific.
 `GET /ready` succeeds only when every backend is ready and includes per-backend states.
