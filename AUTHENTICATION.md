@@ -310,6 +310,10 @@ It does not coordinate read-modify-write operations across processes or nodes.
 Run one Levitate server against each client store and stop that server before using mutating client-management commands.
 Future multi-node storage can implement internal client-store interface without changing OAuth route logic.
 
+To move a deployment to another host without reauthorizing clients, stop the old server first, then copy the private key, client store, and refresh-token store with their `0600` modes, and reuse the same approval secret, `oauth.as.keys.key_id`, issuer, and resource URLs.
+A missing refresh-token store forces every client to authorize again.
+Running both hosts against copies of the same state lets their refresh-token stores diverge, so a token rotated on one host fails on the other.
+
 Current signing configuration supports one active RSA key and publishes one JWK.
 Changing the private key or key ID invalidates every token signed by the previous key immediately.
 Safe current rotation procedure: stop Levitate, replace the key file with `levitate oauth keys init --config <config> --force`, change `oauth.as.keys.key_id`, restart Levitate, then reauthorize clients.
